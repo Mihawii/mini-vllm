@@ -28,7 +28,7 @@ import threading
 import time
 from collections import deque
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 
 import torch
 import torch.nn.functional as F
@@ -49,7 +49,7 @@ from mini_vllm.engine.sampling import SamplingParams, make_generator, sample_tok
 _id_counter = itertools.count()
 
 
-class RequestState(str, Enum):
+class RequestState(StrEnum):
     WAITING = "waiting"
     RUNNING = "running"
     FINISHED = "finished"

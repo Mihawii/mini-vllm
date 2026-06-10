@@ -276,7 +276,6 @@ def simulate(
     """
     import time as _time
 
-    from mini_vllm.engine.sampling import SamplingParams
     from mini_vllm.engine.scheduler import Request, Scheduler
     from mini_vllm.metrics.storage import timestamp_slug, write_jsonl
 

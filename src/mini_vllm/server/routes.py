@@ -13,7 +13,8 @@ import time
 from functools import partial
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, Request as HttpRequest
+from fastapi import APIRouter, HTTPException
+from fastapi import Request as HttpRequest
 from fastapi.responses import PlainTextResponse, StreamingResponse
 
 from mini_vllm.engine.scheduler import Request

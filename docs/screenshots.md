@@ -21,9 +21,11 @@ uv run python scripts/make_screenshots.py
 Rerun the script after changing CLI output. It uses distilgpt2 by default;
 pass `--fast` to use tiny-gpt2.
 
-## Manual browser captures (PNG)
+## Browser captures (PNG)
 
-Start the server first:
+The PNGs currently in `docs/assets/` were captured headlessly (Playwright
+driving Chromium against a live server). To recapture by hand, start the
+server first:
 
 ```
 uv run mini-vllm serve --model distilbert/distilgpt2

@@ -28,7 +28,7 @@ class EngineConfig:
     log_dir: str = "logs"
 
     @classmethod
-    def from_env(cls) -> "EngineConfig":
+    def from_env(cls) -> EngineConfig:
         return cls(
             model_name=_env("MODEL", DEFAULT_MODEL),
             device=_env("DEVICE", "auto"),

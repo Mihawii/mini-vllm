@@ -61,7 +61,7 @@ columns (from batching requests of different lengths) stay invisible.
 
 ## Proving the cache changes nothing
 
-The cache is an optimization, never a behavior change. Two tests in
+The cache must never change what the model generates. Two tests in
 `tests/test_generation.py` enforce that:
 
 - `test_kv_cache_on_off_parity`: greedy decoding with and without the cache
