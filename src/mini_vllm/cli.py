@@ -396,6 +396,77 @@ def simulate(
     console.print(f"[dim]Saved tick metrics to {ticks_path} and summary to {summary_path}[/]")
 
 
+# ---------------------------------------------------------------------------
+# serve / stats
+# ---------------------------------------------------------------------------
+
+
+@app.command()
+def serve(
+    model: str = typer.Option(DEFAULT_MODEL, "--model", "-m"),
+    host: str = typer.Option("127.0.0.1", help="Bind address (0.0.0.0 to expose)."),
+    port: int = typer.Option(8000),
+    max_batch_size: int = typer.Option(8, help="Continuous batching slot count."),
+    device: str = typer.Option("auto"),
+    dtype: str = typer.Option("auto"),
+) -> None:
+    """Start the OpenAI-compatible HTTP server with the dashboard."""
+    import uvicorn
+
+    from mini_vllm.server.app import create_app
+
+    config = EngineConfig(
+        model_name=model,
+        device=device,
+        dtype=dtype,
+        host=host,
+        port=port,
+        max_batch_size=max_batch_size,
+    )
+    console.print(
+        f"[bold cyan]mini-vLLM[/] serving [bold]{model}[/] at "
+        f"[bold]http://{host}:{port}[/]  (docs: /docs, dashboard: /dashboard)"
+    )
+    uvicorn.run(create_app(config), host=host, port=port, log_level="info")
+
+
+@app.command()
+def stats(
+    url: str = typer.Option("http://127.0.0.1:8000", help="Base URL of a running server."),
+) -> None:
+    """Fetch /metrics from a running server and render them."""
+    import httpx
+
+    try:
+        snap = httpx.get(f"{url}/metrics", timeout=5.0).raise_for_status().json()
+    except httpx.HTTPError as exc:
+        console.print(f"[bold red]Error:[/] could not reach {url}/metrics ({exc})")
+        raise typer.Exit(code=1) from exc
+
+    table = Table(title=f"[bold cyan]mini-vLLM stats[/]  {snap.get('model', '')}", border_style="dim")
+    table.add_column("metric", style="dim")
+    table.add_column("value", style="bold", justify="right")
+    table.add_row("device", str(snap.get("device")))
+    table.add_row("uptime", f"{snap.get('uptime_s', 0):.0f}s")
+    requests = snap.get("requests", {})
+    for key in ("total", "queued", "active", "completed", "failed"):
+        table.add_row(f"requests {key}", str(requests.get(key, 0)))
+    tokens = snap.get("tokens", {})
+    table.add_row("prompt tokens", f"{tokens.get('prompt', 0):,}")
+    table.add_row("generated tokens", f"{tokens.get('generated', 0):,}")
+    table.add_row("tokens/s (lifetime)", str(tokens.get("per_second_lifetime", 0)))
+    latency = snap.get("latency_s", {})
+    table.add_row("latency avg", f"{latency.get('avg', 0) * 1000:.0f} ms")
+    table.add_row("latency p50", f"{latency.get('p50', 0) * 1000:.0f} ms")
+    table.add_row("latency p95", f"{latency.get('p95', 0) * 1000:.0f} ms")
+    ttft = snap.get("ttft_s", {})
+    table.add_row("ttft p50", f"{ttft.get('p50', 0) * 1000:.0f} ms")
+    scheduler = snap.get("scheduler", {})
+    table.add_row("batch (active/max)", f"{scheduler.get('active', 0)}/{scheduler.get('max_batch_size', 0)}")
+    table.add_row("scheduler ticks", str(scheduler.get("ticks", 0)))
+    console.print(table)
+
+
 def main() -> None:  # pragma: no cover - thin wrapper
     app()
 
