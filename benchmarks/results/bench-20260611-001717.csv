@@ -1,0 +1,15 @@
+scenario,label,runs,total_tokens,latency_s_avg,latency_s_p50,latency_s_p95,throughput_tok_s,ttft_s_p50,speedup,batch_size,latency_s,slots,makespan_s,prompt_tokens,prefill_ms,decode_tok_s
+latency,sequential,8,512,0.9265,0.9313,0.959,69.08,0.0213,,,,,,,,
+kv_cache,with_cache,5,320,0.9242,0.9315,0.9443,69.25,,,,,,,,,
+kv_cache,without_cache,5,320,2.4826,2.4701,2.638,25.78,,,,,,,,,
+kv_cache,speedup,,,,,,,,2.69,,,,,,,
+batch,batch_1,,64,,,,69.34,,,1,0.923,,,,,
+batch,batch_2,,128,,,,75.21,,,2,1.7019,,,,,
+batch,batch_4,,256,,,,118.67,,,4,2.1573,,,,,
+batch,batch_8,,512,,,,301.1,,,8,1.7004,,,,,
+concurrency,sequential,,512,,4.9169,7.7611,65.97,,,,,1,7.7616,,,
+concurrency,batched,,512,,3.3754,3.3757,151.54,,,,,4,3.3787,,,
+concurrency,speedup,,,,,,,,2.3,,,,,,,
+prompt_sweep,prompt_16,,,,,,,,,,0.9396,,,16,23.6,69.87
+prompt_sweep,prompt_64,,,,,,,,,,0.9701,,,64,39.8,68.8
+prompt_sweep,prompt_256,,,,,,,,,,1.0813,,,256,99.7,65.2

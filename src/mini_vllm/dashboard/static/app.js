@@ -314,12 +314,13 @@ async function loadScheduler() {
     </div>`;
 
   const maxEnd = Math.max(...sim.requests.map((q) => q.arrive_ms + q.latency_ms)) || 1;
+  const plotW = W - 300; // leave room for the trailing "NN tok · N.NNs" label
   const gantt = sim.requests
     .map((q, i) => {
       const y = i * 30;
-      const x0 = (q.arrive_ms / maxEnd) * (W - 220) + 130;
-      const wQueue = (q.queue_ms / maxEnd) * (W - 220);
-      const wRun = ((q.latency_ms - q.queue_ms) / maxEnd) * (W - 220);
+      const x0 = (q.arrive_ms / maxEnd) * plotW + 130;
+      const wQueue = (q.queue_ms / maxEnd) * plotW;
+      const wRun = ((q.latency_ms - q.queue_ms) / maxEnd) * plotW;
       return `
         <text x="122" y="${y + 16}" text-anchor="end" fill="#8b98a5" font-size="11" font-family="monospace">${q.id}</text>
         <rect x="${x0}" y="${y + 4}" width="${Math.max(wQueue, 1)}" height="16" rx="3" fill="#fbbf24" opacity="0.5"/>

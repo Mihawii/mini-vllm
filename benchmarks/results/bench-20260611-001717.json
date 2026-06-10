@@ -1,0 +1,112 @@
+{
+  "timestamp": "2026-06-11 00:16:32",
+  "model": "distilbert/distilgpt2",
+  "device": "cpu",
+  "dtype": "float32",
+  "settings": {
+    "requests": 8,
+    "max_new_tokens": 64,
+    "concurrency": 4
+  },
+  "machine": {
+    "platform": "macOS-26.3-arm64-arm-64bit",
+    "cpu": "Apple M1",
+    "cpu_count": 8,
+    "python": "3.11.14",
+    "torch": "2.12.0",
+    "transformers": "4.57.6"
+  },
+  "latency": {
+    "runs": 8,
+    "total_tokens": 512,
+    "latency_s_avg": 0.9265,
+    "latency_s_p50": 0.9313,
+    "latency_s_p95": 0.959,
+    "throughput_tok_s": 69.08,
+    "ttft_s_p50": 0.0213
+  },
+  "kv_cache": {
+    "with_kv_cache": {
+      "runs": 5,
+      "total_tokens": 320,
+      "latency_s_avg": 0.9242,
+      "latency_s_p50": 0.9315,
+      "latency_s_p95": 0.9443,
+      "throughput_tok_s": 69.25
+    },
+    "without_kv_cache": {
+      "runs": 5,
+      "total_tokens": 320,
+      "latency_s_avg": 2.4826,
+      "latency_s_p50": 2.4701,
+      "latency_s_p95": 2.638,
+      "throughput_tok_s": 25.78
+    },
+    "speedup": 2.69
+  },
+  "batch": [
+    {
+      "batch_size": 1,
+      "latency_s": 0.923,
+      "total_tokens": 64,
+      "throughput_tok_s": 69.34
+    },
+    {
+      "batch_size": 2,
+      "latency_s": 1.7019,
+      "total_tokens": 128,
+      "throughput_tok_s": 75.21
+    },
+    {
+      "batch_size": 4,
+      "latency_s": 2.1573,
+      "total_tokens": 256,
+      "throughput_tok_s": 118.67
+    },
+    {
+      "batch_size": 8,
+      "latency_s": 1.7004,
+      "total_tokens": 512,
+      "throughput_tok_s": 301.1
+    }
+  ],
+  "concurrency": {
+    "sequential": {
+      "slots": 1,
+      "makespan_s": 7.7616,
+      "total_tokens": 512,
+      "throughput_tok_s": 65.97,
+      "latency_s_p50": 4.9169,
+      "latency_s_p95": 7.7611
+    },
+    "batched": {
+      "slots": 4,
+      "makespan_s": 3.3787,
+      "total_tokens": 512,
+      "throughput_tok_s": 151.54,
+      "latency_s_p50": 3.3754,
+      "latency_s_p95": 3.3757
+    },
+    "speedup": 2.3
+  },
+  "prompt_sweep": [
+    {
+      "prompt_tokens": 16,
+      "prefill_ms": 23.6,
+      "decode_tok_s": 69.87,
+      "latency_s": 0.9396
+    },
+    {
+      "prompt_tokens": 64,
+      "prefill_ms": 39.8,
+      "decode_tok_s": 68.8,
+      "latency_s": 0.9701
+    },
+    {
+      "prompt_tokens": 256,
+      "prefill_ms": 99.7,
+      "decode_tok_s": 65.2,
+      "latency_s": 1.0813
+    }
+  ]
+}
