@@ -51,6 +51,23 @@ class LoadedModel:
         }
 
 
+def _realign_parameters(model: torch.nn.Module) -> None:
+    """Copy weights out of the safetensors memory map.
+
+    safetensors loads weights zero-copy via mmap, so a tensor's data pointer
+    is whatever byte offset it has inside the checkpoint file. On macOS 26,
+    Apple's Accelerate BLAS crashes with EXC_ARM_DA_ALIGN (SIGBUS) when
+    cblas_sgemv reads float32 data from such unaligned addresses. Cloning
+    every parameter forces fresh, properly aligned allocations. Costs one
+    pass over the weights at load time; harmless everywhere else.
+    """
+    with torch.no_grad():
+        for param in model.parameters():
+            param.data = param.data.clone()
+        for buffer in model.buffers():
+            buffer.data = buffer.data.clone()
+
+
 def _context_length(config) -> int | None:
     for attr in ("max_position_embeddings", "n_positions", "max_sequence_length"):
         value = getattr(config, attr, None)
@@ -74,6 +91,8 @@ def load_model(name: str, device: str = "auto", dtype: str = "auto") -> LoadedMo
 
     model.to(resolved_device)
     model.eval()
+    if resolved_device.type == "cpu":
+        _realign_parameters(model)
 
     config = model.config
     architectures = getattr(config, "architectures", None) or [type(model).__name__]

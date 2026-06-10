@@ -1,1 +1,89 @@
-<!doctype html><title>mini-vLLM</title><p>dashboard coming in Phase 5</p>
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>mini-vLLM dashboard</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header>
+    <div class="logo">mini-<span>vLLM</span></div>
+    <span class="chip" id="chip-model">model: <b>...</b></span>
+    <div class="meta">
+      <span class="chip" id="chip-device">device: <b>...</b></span>
+      <span class="chip" id="chip-uptime">uptime: <b>...</b></span>
+      <span class="chip" id="chip-batch">batch: <b>...</b></span>
+    </div>
+  </header>
+
+  <nav>
+    <button data-tab="playground" class="active">Playground</button>
+    <button data-tab="tokenizer">Tokenizer</button>
+    <button data-tab="benchmarks">Benchmarks</button>
+    <button data-tab="scheduler">Scheduler</button>
+  </nav>
+
+  <main>
+    <!-- ============================ Playground ============================ -->
+    <section class="tab active" id="tab-playground">
+      <div class="grid cols-2">
+        <div class="card">
+          <h3>Prompt</h3>
+          <textarea id="pg-prompt">Explain what a KV cache does in an LLM inference engine:</textarea>
+          <div class="row">
+            <button class="primary" id="pg-run">Generate</button>
+            <label class="switch"><input type="checkbox" id="pg-stream" checked /> stream tokens</label>
+          </div>
+          <div class="mt">
+            <h3>Output</h3>
+            <div class="output" id="pg-output"><span class="prompt-part">Output appears here.</span></div>
+            <div class="metrics" id="pg-metrics"></div>
+          </div>
+        </div>
+        <div class="card">
+          <h3>Sampling</h3>
+          <div class="controls">
+            <div><label>max tokens</label><input id="pg-max" type="number" value="80" min="1" max="512" /></div>
+            <div><label>temperature</label><input id="pg-temp" type="number" value="0.8" step="0.1" min="0" max="4" /></div>
+            <div><label>top_p</label><input id="pg-topp" type="number" value="0.95" step="0.05" min="0.05" max="1" /></div>
+            <div><label>top_k (0 = off)</label><input id="pg-topk" type="number" value="0" min="0" /></div>
+            <div><label>repetition penalty</label><input id="pg-rep" type="number" value="1.1" step="0.05" min="0.1" /></div>
+            <div><label>seed (blank = random)</label><input id="pg-seed" type="number" placeholder="" /></div>
+          </div>
+          <label>stop string (optional)</label>
+          <input id="pg-stop" type="text" placeholder="e.g. \n\n" />
+          <div class="hint" style="text-align:left;padding:14px 2px 0">
+            Requests go through <code>POST /v1/completions</code>; with streaming on,
+            tokens arrive as Server-Sent Events straight from the scheduler thread.
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================ Tokenizer ============================ -->
+    <section class="tab" id="tab-tokenizer">
+      <div class="card">
+        <h3>Tokenizer inspector</h3>
+        <textarea id="tk-text">The greenhouse robot inspected the tomatoes.</textarea>
+        <div class="row"><button class="primary" id="tk-run">Tokenize</button>
+          <span class="chip" id="tk-count"></span>
+        </div>
+        <div class="mt" id="tk-result"></div>
+      </div>
+    </section>
+
+    <!-- ============================ Benchmarks ============================ -->
+    <section class="tab" id="tab-benchmarks">
+      <div id="bm-content"><div class="hint">Loading benchmark results...</div></div>
+    </section>
+
+    <!-- ============================ Scheduler ============================ -->
+    <section class="tab" id="tab-scheduler">
+      <div id="sc-content"><div class="hint">Loading simulation...</div></div>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

@@ -397,6 +397,79 @@ def simulate(
 
 
 # ---------------------------------------------------------------------------
+# bench / bench-report
+# ---------------------------------------------------------------------------
+
+
+@app.command()
+def bench(
+    model: str = typer.Option(DEFAULT_MODEL, "--model", "-m"),
+    requests: int = typer.Option(10, help="Requests per scenario."),
+    max_new_tokens: int = typer.Option(64, "--max-new-tokens", "-n"),
+    concurrency: int = typer.Option(4, help="Scheduler slots for the continuous batching test."),
+    compare_kv_cache: bool = typer.Option(
+        True, "--compare-kv-cache/--no-compare-kv-cache", help="Measure cache on vs off."
+    ),
+    batch_sizes: str = typer.Option("1,2,4,8", help="Comma-separated static batch sizes."),
+    prompt_lengths: str = typer.Option(
+        "", help="Comma-separated prompt token counts for the prefill sweep (empty = skip)."
+    ),
+    out_dir: Path = typer.Option(Path("benchmarks/results")),
+    device: str = typer.Option("auto"),
+    dtype: str = typer.Option("auto"),
+) -> None:
+    """Run the benchmark suite and save JSON + CSV results."""
+    from mini_vllm.benchmark.report import render_markdown
+    from mini_vllm.benchmark.runner import run_benchmark, save_results
+
+    engine = _load_engine(model, device, dtype)
+    sizes = [int(s) for s in batch_sizes.split(",") if s.strip()]
+    lengths = [int(s) for s in prompt_lengths.split(",") if s.strip()]
+
+    with console.status("[bold cyan]Benchmarking...") as status:
+        report = run_benchmark(
+            engine,
+            requests=requests,
+            max_new_tokens=max_new_tokens,
+            concurrency=concurrency,
+            compare_kv_cache=compare_kv_cache,
+            batch_sizes=sizes,
+            prompt_lengths=lengths or None,
+            on_progress=lambda label: status.update(f"[bold cyan]Benchmarking: {label}..."),
+        )
+    json_path, csv_path = save_results(report, out_dir)
+
+    from rich.markdown import Markdown
+
+    console.print(Markdown(render_markdown(report)))
+    console.print(f"[dim]Saved {json_path} and {csv_path}[/]")
+
+
+@app.command(name="bench-report")
+def bench_report(
+    results_dir: Path = typer.Option(Path("benchmarks/results")),
+    write: bool = typer.Option(True, "--write/--no-write", help="Also write report.md."),
+) -> None:
+    """Render the most recent benchmark run as a Markdown report."""
+    from rich.markdown import Markdown
+
+    from mini_vllm.benchmark.report import latest_report, render_markdown
+
+    report = latest_report(results_dir)
+    if report is None:
+        console.print(
+            f"[bold red]Error:[/] no benchmark results in {results_dir}. Run `mini-vllm bench` first."
+        )
+        raise typer.Exit(code=1)
+    markdown = render_markdown(report)
+    console.print(Markdown(markdown))
+    if write:
+        out = results_dir / "report.md"
+        out.write_text(markdown)
+        console.print(f"[dim]Wrote {out}[/]")
+
+
+# ---------------------------------------------------------------------------
 # serve / stats
 # ---------------------------------------------------------------------------
 
