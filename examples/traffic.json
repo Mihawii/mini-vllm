@@ -1,0 +1,7 @@
+[
+  { "at_ms": 0, "prompt": "Explain batching.", "max_new_tokens": 60 },
+  { "at_ms": 100, "prompt": "Explain KV cache.", "max_new_tokens": 60 },
+  { "at_ms": 300, "prompt": "Write a short poem about CUDA.", "max_new_tokens": 40 },
+  { "at_ms": 600, "prompt": "What does a scheduler do in an inference server?", "max_new_tokens": 50 },
+  { "at_ms": 900, "prompt": "Describe a tokenizer in one sentence.", "max_new_tokens": 30 }
+]
