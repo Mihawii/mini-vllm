@@ -31,6 +31,7 @@ class MetricsCollector:
         self.queued_requests = 0
         self.prompt_tokens = 0
         self.generated_tokens = 0
+        self.preemptions = 0
         # rolling windows so percentiles reflect recent behavior
         self._latencies_s: deque[float] = deque(maxlen=window)
         self._ttfts_s: deque[float] = deque(maxlen=window)
@@ -55,6 +56,11 @@ class MetricsCollector:
                 self._latencies_s.append(max(request.finished_at - request.submitted_at, 0.0))
                 if request.ttft_s is not None:
                     self._ttfts_s.append(request.ttft_s)
+            elif event == "preempted":
+                # back from the live batch to the front of the queue
+                self.active_requests = max(self.active_requests - 1, 0)
+                self.queued_requests += 1
+                self.preemptions += 1
             elif event == "failed":
                 # a request can fail from WAITING (validation) or RUNNING
                 if request.started_at:
@@ -80,6 +86,7 @@ class MetricsCollector:
                     "active": self.active_requests,
                     "completed": self.completed_requests,
                     "failed": self.failed_requests,
+                    "preemptions": self.preemptions,
                 },
                 "tokens": {
                     "prompt": self.prompt_tokens,
