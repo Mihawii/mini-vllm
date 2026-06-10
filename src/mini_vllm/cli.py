@@ -253,6 +253,149 @@ def batch(
     )
 
 
+# ---------------------------------------------------------------------------
+# simulate (continuous batching demo)
+# ---------------------------------------------------------------------------
+
+
+@app.command()
+def simulate(
+    traffic_file: Path = typer.Argument(..., help="JSON list of {at_ms, prompt, max_new_tokens}."),
+    model: str = typer.Option(DEFAULT_MODEL, "--model", "-m"),
+    max_batch_size: int = typer.Option(4, help="Scheduler slot count."),
+    temperature: float = typer.Option(0.8),
+    seed: int = typer.Option(0, help="Seed shared by all simulated requests."),
+    out_dir: Path = typer.Option(Path("logs/simulations"), help="Where JSONL metrics land."),
+    device: str = typer.Option("auto"),
+    dtype: str = typer.Option("auto"),
+) -> None:
+    """Replay a traffic file through the continuous batching scheduler.
+
+    Requests arrive on a wall-clock timeline while earlier ones are still
+    decoding; the scheduler grows and shrinks the live batch every tick.
+    """
+    import time as _time
+
+    from mini_vllm.engine.sampling import SamplingParams
+    from mini_vllm.engine.scheduler import Request, Scheduler
+    from mini_vllm.metrics.storage import timestamp_slug, write_jsonl
+
+    if not traffic_file.exists():
+        console.print(f"[bold red]Error:[/] file not found: {traffic_file}")
+        raise typer.Exit(code=1)
+    spec = json.loads(traffic_file.read_text())
+
+    engine = _load_engine(model, device, dtype)
+    scheduler = Scheduler(engine, max_batch_size=max_batch_size)
+
+    pending: list[tuple[float, Request]] = []
+    for i, item in enumerate(spec):
+        params = _sampling_params(
+            item.get("max_new_tokens", 48), item.get("temperature", temperature),
+            0, item.get("top_p", 0.95), 1.1, None, seed,
+        )
+        req = Request(prompt=item["prompt"], params=params, request_id=f"req-{i}")
+        pending.append((float(item.get("at_ms", 0)), req))
+    pending.sort(key=lambda pair: pair[0])
+    arrivals = {req.request_id: at for at, req in pending}
+    requests = [req for _, req in pending]
+
+    console.print(
+        f"[bold cyan]Simulating[/] {len(pending)} requests, max batch size {max_batch_size}"
+    )
+    t0 = _time.perf_counter()
+    while pending or scheduler.has_work():
+        now_ms = (_time.perf_counter() - t0) * 1000.0
+        while pending and pending[0][0] <= now_ms:
+            _, req = pending.pop(0)
+            scheduler.submit(req)
+        if scheduler.has_work():
+            scheduler.step()
+        elif pending:
+            _time.sleep(min(0.002, max(pending[0][0] - now_ms, 0.1) / 1000.0))
+    makespan_ms = (_time.perf_counter() - t0) * 1000.0
+
+    # ---- per-request table ----
+    table = Table(title="[bold cyan]Request timeline", border_style="dim")
+    for col, justify in [
+        ("id", "left"), ("arrive ms", "right"), ("queue ms", "right"), ("ttft ms", "right"),
+        ("latency ms", "right"), ("tok", "right"), ("tok/s", "right"), ("finish", "left"), ("output", "left"),
+    ]:
+        table.add_column(col, justify=justify)
+    for req in requests:
+        res = req.to_result()
+        snippet = (res.text[:42] + "...") if len(res.text) > 45 else res.text
+        table.add_row(
+            req.request_id,
+            f"{arrivals[req.request_id]:.0f}",
+            f"{req.queue_time_s * 1000:.0f}",
+            f"{(req.ttft_s or 0) * 1000:.0f}",
+            f"{res.latency_s * 1000:.0f}",
+            str(res.completion_tokens),
+            f"{res.tokens_per_second:.1f}",
+            res.finish_reason if req.error is None else f"[red]{req.error[:30]}",
+            snippet.replace("\n", " "),
+        )
+    console.print(table)
+
+    # ---- batch occupancy timeline ----
+    ticks = scheduler.ticks
+    shown = ticks if len(ticks) <= 28 else [ticks[i] for i in range(0, len(ticks), len(ticks) // 28 + 1)]
+    timeline = Table(title="[bold cyan]Scheduler ticks  (█ active  ░ queued)", border_style="dim")
+    timeline.add_column("t (ms)", justify="right")
+    timeline.add_column("active", justify="right")
+    timeline.add_column("queue", justify="right")
+    timeline.add_column("cache len", justify="right")
+    timeline.add_column("batch")
+    for tk in shown:
+        timeline.add_row(
+            f"{tk.t_ms:.0f}", str(tk.active), str(tk.queue_depth), str(tk.cache_len),
+            "[green]" + "█" * tk.active + "[/][yellow]" + "░" * tk.queue_depth,
+        )
+    console.print(timeline)
+
+    total_tokens = sum(len(r.generated) for r in requests)
+    busy = [tk.active for tk in ticks if tk.active > 0]
+    avg_active = sum(busy) / len(busy) if busy else 0.0
+    console.print(
+        f"[bold]makespan[/] {makespan_ms:.0f} ms   [bold]tokens[/] {total_tokens}   "
+        f"[bold]throughput[/] {total_tokens / (makespan_ms / 1000):.1f} tok/s   "
+        f"[bold]avg active batch[/] {avg_active:.2f}   [bold]ticks[/] {len(ticks)}"
+    )
+
+    # ---- persist metrics ----
+    slug = timestamp_slug()
+    ticks_path = out_dir / f"sim-{slug}-ticks.jsonl"
+    write_jsonl(ticks_path, [tk.to_dict() for tk in ticks])
+    summary = {
+        "model": model,
+        "max_batch_size": max_batch_size,
+        "makespan_ms": round(makespan_ms, 1),
+        "total_tokens": total_tokens,
+        "throughput_tok_s": round(total_tokens / (makespan_ms / 1000), 2),
+        "avg_active_batch": round(avg_active, 2),
+        "requests": [
+            {
+                "id": req.request_id,
+                "prompt": req.prompt,
+                "arrive_ms": arrivals[req.request_id],
+                "queue_ms": round(req.queue_time_s * 1000, 1),
+                "ttft_ms": round((req.ttft_s or 0) * 1000, 1),
+                "latency_ms": round(req.to_result().latency_s * 1000, 1),
+                "tokens": len(req.generated),
+                "finish_reason": req.finish_reason,
+                "text": req.tracker.text if req.tracker else "",
+            }
+            for req in requests
+        ],
+        "ticks": [tk.to_dict() for tk in ticks],
+    }
+    summary_path = out_dir / f"sim-{slug}.json"
+    summary_path.parent.mkdir(parents=True, exist_ok=True)
+    summary_path.write_text(json.dumps(summary, indent=2))
+    console.print(f"[dim]Saved tick metrics to {ticks_path} and summary to {summary_path}[/]")
+
+
 def main() -> None:  # pragma: no cover - thin wrapper
     app()
 
