@@ -269,6 +269,16 @@ async function loadBenchmarks() {
     <div class="legend"><span><b style="color:#22d3ee">${r.concurrency.speedup}x throughput</b> with the same model and the same requests</span></div></div>`);
   }
 
+  if (r.quantization) {
+    const q = r.quantization;
+    cards.push(`<div class="card"><h3>Dynamic int8 quantization (CPU)</h3>${barChart([
+      { label: "float32", value: q.float32.throughput_tok_s, color: "#8b98a5" },
+      { label: "int8 dynamic", value: q.int8.throughput_tok_s, color: "#a78bfa" },
+    ], { unit: " tok/s" })}
+    <div class="legend"><span>checkpoint ${q.float32.checkpoint_mb} MB -> <b style="color:#a78bfa">${q.int8.checkpoint_mb} MB</b></span>
+    <span>greedy token agreement <b>${(q.token_agreement * 100).toFixed(0)}%</b></span></div></div>`);
+  }
+
   if (r.latency) {
     cards.push(`<div class="card"><h3>Single-request latency</h3><table>
       <thead><tr><th>avg</th><th>p50</th><th>p95</th><th>throughput</th></tr></thead>

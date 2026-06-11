@@ -76,7 +76,7 @@ def main() -> None:
         "simulate",
         uv + [
             "simulate", "examples/traffic.json", "--model", MODEL, "--seed", "0",
-            "--cache-backend", "paged", "--block-size", "16", "--pool-blocks", "24",
+            "--cache-backend", "paged", "--block-size", "16", "--pool-blocks", "10",
             "--prefill-chunk-size", "32",
         ],
         "mini-vllm simulate (continuous batching, paged KV pool)",

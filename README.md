@@ -145,11 +145,12 @@ on your hardware.
 
 | Scenario | Result |
 |---|---|
-| Single request | 0.93 s avg latency, 69 tok/s |
-| KV cache on vs off | 69.3 vs 25.8 tok/s, **2.69x speedup** |
-| Static batching | 69 tok/s at batch 1 to 301 tok/s at batch 8 |
-| Continuous batching (4 slots vs 1) | 66 to 152 tok/s, **2.3x throughput** |
-| Prefill scaling | 24 ms at 16 prompt tokens to 100 ms at 256, decode speed flat |
+| Single request | ~0.9 s avg latency, 69 tok/s |
+| KV cache on vs off | 69.5 vs 26.7 tok/s, **2.6x speedup** |
+| Static batching | 69 tok/s at batch 1 to 298 tok/s at batch 8 |
+| Continuous batching (4 slots vs 1) | 68 to 140 tok/s, **2.1x throughput** |
+| Prefill scaling | ~24 ms at 16 prompt tokens to ~100 ms at 256, decode speed flat |
+| Dynamic int8 vs fp32 | 72 vs 64 tok/s, checkpoint 328 to 239 MB, 100% greedy token agreement on the test prompts |
 
 The KV cache gap widens with completion length because the uncached path
 re-processes the whole sequence every step. The prompt sweep shows the other
