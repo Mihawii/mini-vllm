@@ -47,7 +47,7 @@ uv run mini-vllm simulate examples/traffic.json --model distilbert/distilgpt2
 | 10 | `docs/assets/api-docs.png` | `http://127.0.0.1:8000/docs`, expand POST /v1/completions. |
 | 11 | `docs/assets/tests.png` | Terminal running `uv run pytest -v` scrolled to the green summary (or capture as SVG with the script pattern). |
 
-Capture at a window width around 1200 px, dark OS theme, default zoom.
+Capture at a window width around 1200 px, default zoom.
 macOS: Cmd-Shift-4, then space, then click the window for a clean shot with
 no desktop clutter.
 
