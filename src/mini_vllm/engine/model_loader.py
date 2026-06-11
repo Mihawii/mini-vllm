@@ -33,6 +33,7 @@ class LoadedModel:
     context_length: int | None
     architecture: str
     supports_kv_cache: bool
+    quantization: str | None = None
 
     @property
     def device_name(self) -> str:
@@ -48,6 +49,7 @@ class LoadedModel:
             "context_length": self.context_length,
             "vocab_size": self.tokenizer.vocab_size,
             "kv_cache": self.supports_kv_cache,
+            "quantization": self.quantization,
         }
 
 
@@ -76,9 +78,15 @@ def _context_length(config) -> int | None:
     return None
 
 
-def load_model(name: str, device: str = "auto", dtype: str = "auto") -> LoadedModel:
+def load_model(
+    name: str, device: str = "auto", dtype: str = "auto", quantize: str | None = None
+) -> LoadedModel:
     resolved_device = resolve_device(device)
     resolved_dtype = resolve_dtype(dtype, resolved_device)
+    if quantize not in (None, "int8"):
+        raise ModelLoadError(f"Unknown quantization '{quantize}'. Supported: int8 (CPU).")
+    if quantize == "int8" and resolved_device.type != "cpu":
+        raise ModelLoadError("Dynamic int8 quantization is CPU only; use --device cpu.")
 
     try:
         tokenizer = TokenizerWrapper(name)
@@ -93,6 +101,13 @@ def load_model(name: str, device: str = "auto", dtype: str = "auto") -> LoadedMo
     model.eval()
     if resolved_device.type == "cpu":
         _realign_parameters(model)
+    # Count parameters before quantization: packed int8 weights are not
+    # nn.Parameters, so counting afterwards would under-report.
+    num_parameters = sum(p.numel() for p in model.parameters())
+    if quantize == "int8":
+        from mini_vllm.engine.quantize import quantize_int8
+
+        model, _ = quantize_int8(model)
 
     config = model.config
     architectures = getattr(config, "architectures", None) or [type(model).__name__]
@@ -106,10 +121,11 @@ def load_model(name: str, device: str = "auto", dtype: str = "auto") -> LoadedMo
         name=name,
         device=resolved_device,
         dtype=resolved_dtype,
-        num_parameters=sum(p.numel() for p in model.parameters()),
+        num_parameters=num_parameters,
         context_length=_context_length(config),
         architecture=architectures[0],
         supports_kv_cache=supports_kv,
+        quantization=quantize,
     )
 
 

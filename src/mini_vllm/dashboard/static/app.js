@@ -353,7 +353,33 @@ async function loadScheduler() {
           ${metricChip("throughput", `${sim.throughput_tok_s} tok/s`, true)}
           ${metricChip("avg active batch", sim.avg_active_batch)}
           ${metricChip("total tokens", sim.total_tokens)}
+          ${sim.preemptions ? metricChip("preemptions", sim.preemptions) : ""}
+          ${sim.prefill_chunk_size ? metricChip("prefill chunk", sim.prefill_chunk_size) : ""}
         </div>
       </div>
+      ${poolCard(sim, ticks, W)}
     </div>`;
+}
+
+function poolCard(sim, ticks, W) {
+  const pool = sim.pool;
+  if (!pool || pool.backend !== "paged") return "";
+  const H = 160;
+  const maxBlocks = pool.num_blocks;
+  const peak = Math.max(...ticks.map((t) => t.pool_used_blocks || 0), 1);
+  const chart = `
+    <svg class="chart" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">
+      ${[0, Math.round(maxBlocks / 2), maxBlocks].map((v) => {
+        const y = H - 18 - (v / maxBlocks) * (H - 30);
+        return `<line x1="34" x2="${W - 10}" y1="${y}" y2="${y}" stroke="#1f2937" stroke-dasharray="3 5"/>
+                <text x="0" y="${y + 4}" fill="#8b98a5" font-size="10" font-family="monospace">${v}</text>`;
+      }).join("")}
+      ${stepArea(ticks, "pool_used_blocks", W, H, maxBlocks, "#a78bfa")}
+    </svg>
+    <div class="legend">
+      <span><i style="background:#a78bfa"></i>blocks in use (pool: ${maxBlocks} x ${pool.block_size} tokens)</span>
+      <span>peak ${peak} blocks (${((peak / maxBlocks) * 100).toFixed(0)}%)</span>
+      ${sim.preemptions ? `<span style="color:#fbbf24">${sim.preemptions} preemption(s) when the pool filled</span>` : ""}
+    </div>`;
+  return `<div class="card"><h3>Paged KV cache pool</h3>${chart}</div>`;
 }

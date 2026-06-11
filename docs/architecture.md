@@ -27,9 +27,11 @@ flowchart TD
 | `engine/tokenizer.py` | Encode, decode, token breakdown, left padding policy |
 | `engine/sampling.py` | SamplingParams validation; temperature, top-k, top-p, repetition penalty, seeded draws |
 | `engine/kv_cache.py` | Cache layout, Hugging Face Cache object normalization, batch merge and row ops |
+| `engine/cache_backend.py` | Per-request cache storage: contiguous tensors or the paged block pool |
 | `engine/batching.py` | Left-pad collation, position ids from attention masks |
 | `engine/generation.py` | The decode loop: prefill, cached decode, stop handling, static batching, HF fallback |
-| `engine/scheduler.py` | Iteration-level scheduling, request lifecycle, daemon loop for the server |
+| `engine/scheduler.py` | Iteration-level scheduling, chunked prefill, preemption, daemon loop for the server |
+| `engine/quantize.py` | Dynamic int8 experiment: Conv1D conversion plus torch dynamic quantization |
 | `server/` | FastAPI app, OpenAI-style schemas, SSE streaming bridge, routes |
 | `metrics/` | Thread-safe counters and percentiles; JSONL persistence |
 | `benchmark/` | Measured scenarios, JSON/CSV writers, Markdown report |
@@ -44,8 +46,9 @@ flowchart TD
 3. `Scheduler.submit()` runs on the caller's thread: it encodes the prompt
    and rejects oversized or empty prompts immediately (the queue receives an
    error and the handler returns 400).
-4. The scheduler thread admits the request on its next tick, prefills it,
-   and merges its KV cache into the live batch.
+4. The scheduler thread admits the request on its next tick and prefills it
+   (in one pass, or chunk by chunk when chunked prefill is on); its KV cache
+   lands in the configured backend and joins the per-tick batch assembly.
 5. Every tick appends one token per active request. Deltas go into each
    request's queue as they appear.
 6. A non-streaming handler waits for the terminal `("done", result)` item

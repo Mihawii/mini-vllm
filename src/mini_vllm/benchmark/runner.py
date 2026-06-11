@@ -181,6 +181,49 @@ def run_concurrency(
     return {"sequential": sequential, "batched": batched, "speedup": round(speedup, 2)}
 
 
+def run_quantize_compare(model_name: str, requests: int, max_new_tokens: int) -> dict:
+    """fp32 vs dynamic int8 on CPU: speed, checkpoint size, and how much the
+    greedy output actually changes (token agreement)."""
+    from mini_vllm.engine.model_loader import load_model
+    from mini_vllm.engine.quantize import state_dict_bytes
+
+    variants: dict[str, dict] = {}
+    outputs: dict[str, list[list[int]]] = {}
+    for label, quantize in (("float32", None), ("int8", "int8")):
+        loaded = load_model(model_name, device="cpu", dtype="float32", quantize=quantize)
+        engine = GenerationEngine(loaded)
+        engine.generate(DEFAULT_PROMPTS[0], _greedy(8))  # warmup
+        latencies, tokens, outs = [], [], []
+        for i in range(requests):
+            prompt = DEFAULT_PROMPTS[i % len(DEFAULT_PROMPTS)]
+            result = engine.generate(prompt, _greedy(max_new_tokens))
+            latencies.append(result.latency_s)
+            tokens.append(result.completion_tokens)
+            outs.append(result.token_ids)
+        variants[label] = {
+            **_stats(latencies, tokens),
+            "checkpoint_mb": round(state_dict_bytes(loaded.model) / 1e6, 1),
+        }
+        outputs[label] = outs
+
+    agreements = []
+    for fp32_ids, int8_ids in zip(outputs["float32"], outputs["int8"]):
+        longest = max(len(fp32_ids), len(int8_ids), 1)
+        matches = sum(a == b for a, b in zip(fp32_ids, int8_ids))
+        agreements.append(matches / longest)
+    speedup = (
+        variants["float32"]["latency_s_avg"] / variants["int8"]["latency_s_avg"]
+        if variants["int8"]["latency_s_avg"] > 0
+        else 0.0
+    )
+    return {
+        "float32": variants["float32"],
+        "int8": variants["int8"],
+        "speedup": round(speedup, 2),
+        "token_agreement": round(sum(agreements) / len(agreements), 3),
+    }
+
+
 def run_prompt_sweep(
     engine: GenerationEngine, prompt_lengths: list[int], max_new_tokens: int
 ) -> list[dict]:
@@ -216,6 +259,7 @@ def run_benchmark(
     compare_kv_cache: bool = True,
     batch_sizes: list[int] | None = None,
     prompt_lengths: list[int] | None = None,
+    compare_quantize: bool = False,
     on_progress=None,
 ) -> dict:
     def progress(label: str) -> None:
@@ -257,6 +301,11 @@ def run_benchmark(
         progress("prompt length sweep")
         report["prompt_sweep"] = run_prompt_sweep(engine, prompt_lengths, max_new_tokens)
 
+    if compare_quantize and engine.device.type == "cpu":
+        progress("int8 quantization comparison")
+        q_requests = max(min(requests, 5), 2)
+        report["quantization"] = run_quantize_compare(engine.lm.name, q_requests, max_new_tokens)
+
     return report
 
 
@@ -290,6 +339,13 @@ def save_results(report: dict, out_dir: str | Path = "benchmarks/results") -> tu
         add("concurrency", "speedup", {"speedup": report["concurrency"]["speedup"]})
     for row in report.get("prompt_sweep", []):
         add("prompt_sweep", f"prompt_{row['prompt_tokens']}", row)
+    if "quantization" in report:
+        add("quantization", "float32", report["quantization"]["float32"])
+        add("quantization", "int8", report["quantization"]["int8"])
+        add("quantization", "summary", {
+            "speedup": report["quantization"]["speedup"],
+            "token_agreement": report["quantization"]["token_agreement"],
+        })
 
     fieldnames: list[str] = []
     for row in rows:

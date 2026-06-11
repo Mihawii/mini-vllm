@@ -5,7 +5,7 @@
 ![Python](https://img.shields.io/badge/python-3.11%2B-blue)
 ![PyTorch](https://img.shields.io/badge/PyTorch-2.x-ee4c2c)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.115%2B-009688)
-![Tests](https://img.shields.io/badge/tests-59%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-74%20passing-brightgreen)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey)
 
 mini-vLLM is a from-scratch inference server built to understand how systems
@@ -47,15 +47,20 @@ explains how to regenerate all of them.
 
 - Custom autoregressive decoding loop with explicit prefill and decode phases
 - KV cache with on/off toggle and a benchmark that proves the speedup
+- Paged KV cache backend: block pool, per-request block tables, lazy shape discovery (GQA models included), live utilization metrics
+- Preemption: when the pool fills, the newest request is evicted and recomputed later with zero output loss
+- Chunked prefill: long prompts stop stalling the decode batch
 - Sampling: temperature, top-k, top-p, repetition penalty, stop strings, seeded reproducibility, greedy at temperature 0
 - Static batching with left padding and per-row finish tracking
-- Continuous batching: an iteration-level scheduler where requests join and leave the live batch mid-flight, with KV cache merge on admission
+- Continuous batching: an iteration-level scheduler where requests join and leave the live batch mid-flight
 - SSE streaming from the CLI, the API, and the dashboard
 - OpenAI-style HTTP API (`/v1/completions`, `/v1/chat/completions`) with usage and timing extras
+- Dynamic int8 quantization experiment with measured size, speed, and output-agreement numbers
+- Tensor parallelism math demo: one block sharded Megatron-style across two simulated ranks, asserted equal to the reference
 - Metrics: JSON and Prometheus endpoints, request log, `mini-vllm stats`
 - Benchmark suite with JSON/CSV output and a Markdown report generator
-- Static dashboard (no build step): playground, tokenizer inspector, benchmark charts, scheduler timeline
-- 59 tests on a 100K-parameter model; the suite runs in about 10 seconds
+- Static dashboard (no build step): playground, tokenizer inspector, benchmark charts, scheduler timeline with pool view
+- Tests on a 100K-parameter model; the suite runs in well under a minute
 
 ## Architecture
 
@@ -100,6 +105,9 @@ uv run mini-vllm simulate examples/traffic.json --model distilbert/distilgpt2
 
 # serve the API + dashboard
 uv run mini-vllm serve --model distilbert/distilgpt2
+
+# chat that actually chats (~1 GB download, instruct model with a real template)
+uv run mini-vllm serve --model Qwen/Qwen2.5-0.5B-Instruct
 ```
 
 Without uv: `python -m venv .venv && source .venv/bin/activate && pip install -e .`
@@ -164,20 +172,38 @@ leave immediately. `mini-vllm simulate` makes the whole lifecycle visible,
 and [docs/batching.md](docs/batching.md) covers the mechanics, including why
 zero-padded cache columns are safe under an attention mask.
 
+**Paged KV cache.** Cache memory comes from a pool of fixed-size blocks;
+each request holds a block table instead of one growing tensor. Appends are
+O(1), fragmentation cannot happen by construction, and freed blocks are
+reusable immediately, which is what makes preemption cheap. Try it:
+
+```bash
+uv run mini-vllm simulate examples/traffic.json \
+    --cache-backend paged --block-size 16 --pool-blocks 48 --prefill-chunk-size 32
+```
+
+[docs/paged_kv_cache.md](docs/paged_kv_cache.md) explains the design and is
+candid about the one piece that is not vLLM-grade: stock Hugging Face
+models need contiguous tensors, so blocks are gathered per step instead of
+being read in place by a custom kernel.
+
 ## Project structure
 
 ```
 src/mini_vllm/
   engine/        model_loader, tokenizer, sampling, kv_cache, batching,
-                 generation (the decode loop), scheduler (continuous batching)
+                 cache_backend (contiguous + paged pool), quantize,
+                 generation (the decode loop), scheduler (continuous
+                 batching, chunked prefill, preemption)
   server/        FastAPI app, OpenAI-style schemas, SSE streaming bridge
   metrics/       collector (counters, percentiles), JSONL storage
   benchmark/     measured scenarios, report generator
   dashboard/     static HTML/JS/CSS, no build step
   cli.py         inspect, tokenize, generate, batch, simulate, serve,
                  stats, bench, bench-report
-tests/           59 tests against sshleifer/tiny-gpt2
-docs/            architecture, kv_cache, batching, api, demo script
+experiments/     tensor_parallel.py (sharding math demo)
+tests/           pytest suite against sshleifer/tiny-gpt2
+docs/            architecture, kv_cache, paged_kv_cache, batching, api
 examples/        prompts.json, traffic.json
 benchmarks/      methodology + committed results
 ```
@@ -188,27 +214,34 @@ benchmarks/      methodology + committed results
 uv run pytest
 ```
 
-The suite uses a 100K-parameter model so it stays fast (~10 s). The tests
-that matter most are correctness anchors: greedy parity between our loop and
-`model.generate()`, parity with the cache on and off, batched rows matching
-single-request output, and the scheduler completing interleaved workloads
-with streaming deltas that concatenate to the final text.
+The suite uses a 100K-parameter model so 74 tests finish in well under half
+a minute. The tests that matter most are correctness anchors: greedy parity
+between our loop and `model.generate()`, parity with the cache on and off,
+parity between the paged and contiguous backends, batched rows matching
+single-request output, preempted requests finishing with exactly their
+unpreempted output, and chunked prefill leaving results unchanged while
+decode keeps advancing beside it.
 
 ## Limitations
 
 This is a teaching system, sized to be read in an afternoon. Honest gaps:
 
-- No paged KV cache: each batch keeps one contiguous cache tensor, re-padded
-  as requests join and leave. vLLM's block tables avoid those copies.
-- Prefill runs inline on the model thread, so one huge prompt briefly stalls
-  decoding for everyone (visible in the simulate timeline).
-- No preemption, priorities, or prefill/decode disaggregation.
-- One model per server process; no tensor parallelism, no quantization.
+- The paged backend gathers blocks into contiguous tensors each step because
+  stock Hugging Face models require that layout; vLLM's kernels read blocks
+  in place. Memory management is real, the attention kernel is not ours.
+- The scheduler is FCFS with recompute-mode preemption; there are no
+  priority classes and no prefill/decode disaggregation across processes.
+- Tensor parallelism is a numerical demo on simulated ranks
+  (`experiments/tensor_parallel.py`), never a multi-device serving feature
+  here. One model per server process.
+- Dynamic int8 quantization needs a torch build with a quantized engine
+  (qnnpack or fbgemm); the experiment reports and degrades when absent.
 - OpenAI compatibility covers the common fields; `n>1`, `logprobs`, and tool
   calls are not implemented.
-- Base GPT-2 models are not instruction-tuned, so chat output quality
-  reflects the base model, and the chat endpoint mainly demonstrates
-  template plumbing.
+- GPT-2 family models are not instruction-tuned; for a chat endpoint that
+  actually chats, serve a small instruct model such as
+  Qwen2.5-0.5B-Instruct (the engine is model-agnostic and handles its chat
+  template and GQA cache layout).
 
 One field note worth reading: safetensors memory-maps weights at arbitrary
 file offsets, and on macOS 26 Apple's Accelerate `sgemv` kernel crashes the
@@ -218,11 +251,12 @@ aligned allocations; the investigation is written up in
 
 ## Roadmap
 
-- Paged KV cache with a block table and a memory-usage view in the dashboard
-- Prefill chunking so large prompts stop stalling the decode loop
+- Prefix caching: block-aligned prompt sharing across requests, the natural
+  next step once block tables exist
 - Speculative decoding (tiny-gpt2 drafting for distilgpt2)
-- Dynamic int8 quantization experiment with a quality/latency comparison
-- TinyLlama support notes for machines with more disk and RAM
+- Mixed prefill+decode forward passes (true chunked prefill batching needs
+  variable-length attention)
+- Real multi-process tensor parallelism behind the existing sharding math
 - WebSocket streaming as an SSE alternative
 
 ## License

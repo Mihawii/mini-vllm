@@ -59,21 +59,33 @@ from whatever requests are alive:
 `src/mini_vllm/engine/scheduler.py` implements this on top of the same
 engine primitives. The interesting mechanics:
 
-**Cache merge.** The newcomer's cache covers its prompt; the live batch's
-cache covers longer histories. The shorter side is left-padded with zero
-keys and values along the sequence dimension, then the two stack along the
-batch dimension. Zero K/V columns are safe because the attention mask
-excludes them from the softmax; a masked position is never read.
+**Per-request cache storage.** Each request's keys and values live in a
+cache backend (contiguous tensors, or the paged block pool described in
+[paged_kv_cache.md](paged_kv_cache.md)). Every tick the scheduler asks the
+backend to assemble the live batch: per-request caches are left-padded with
+zero K/V columns to a common length and stacked. The zero columns are safe
+because the attention mask excludes them from the softmax; a masked
+position is never read.
 
-**Retirement.** When a request finishes, its row is dropped from the cache
-(`select_rows`) and columns that became all-padding are trimmed
-(`trim_left_padding`), so memory tracks the longest live request instead of
-the longest request ever seen.
+**Retirement.** When a request finishes, its storage is freed immediately
+(with the paged backend, its blocks go straight back on the free list).
+Because the batch is reassembled from scratch each tick, there is no
+long-lived batched tensor to keep in sync and no stale padding to carry.
 
 **Threading.** `submit()` is safe from any thread; `step()` runs only on the
 model thread. The HTTP server wraps the scheduler in a daemon thread
 (`SchedulerLoop`) and bridges results back through per-request queues, so
 two curl requests arriving together genuinely share batches.
+
+**Chunked prefill.** With `--prefill-chunk-size N`, a long prompt is
+processed N tokens per tick instead of in one inline forward pass, so
+decoding requests stall for at most one chunk. Details and tests are in
+[paged_kv_cache.md](paged_kv_cache.md).
+
+**Preemption.** When the paged pool runs out of blocks, the most recently
+started request is evicted and requeued; its prompt plus the tokens it
+already generated are prefilled again on re-admission, so no output is
+lost. The simulate summary and `/metrics` count preemptions.
 
 ## Seeing it
 
@@ -88,12 +100,11 @@ The benchmark quantifies the gain: the same eight requests pushed through
 the scheduler with one slot versus four slots ran 2.3x faster end to end on
 the development machine (`mini-vllm bench`, "concurrency" scenario).
 
-## What real engines add beyond this
+## What real engines still add beyond this
 
-This scheduler keeps one contiguous cache tensor per batch and re-pads when
-shapes change, which costs copies that vLLM avoids with paged attention and
-block tables. There is also no preemption, no priority, and no
-prefill/decode disaggregation: prefills run inline on the model thread, so
-one giant prompt briefly stalls everyone (the simulate timeline makes this
-visible). These are deliberate simplifications; the point here is to make
-the core idea readable.
+The paged backend manages memory the way vLLM does, but vLLM's attention
+kernel reads blocks in place; we gather them into contiguous tensors each
+tick because stock Hugging Face models require that layout. There are also
+no priority classes, no prefill/decode disaggregation across processes, and
+no custom kernels anywhere. These are deliberate simplifications; the point
+here is to make the core ideas readable and measurable.

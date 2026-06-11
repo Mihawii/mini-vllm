@@ -256,11 +256,15 @@ class Scheduler:
                 request.state = RequestState.PREFILLING
                 self.backend.add(request.request_id)
                 self.prefilling.append(request)
-            else:
-                self._prefill_full(request, ids)
+            elif not self._prefill_full(request, ids):
+                # The pool has no room for newcomers. Admissions never evict
+                # running work (that would let arrivals ping-pong forever);
+                # stop admitting and let decode free blocks naturally.
+                return
 
-    def _prefill_full(self, request: Request, ids: list[int]) -> None:
-        """One forward pass over all ids, then join the decode batch."""
+    def _prefill_full(self, request: Request, ids: list[int]) -> bool:
+        """One forward pass over all ids, then join the decode batch.
+        Returns False when the pool cannot host the newcomer right now."""
         device = self.engine.device
         input_ids = torch.tensor([ids], dtype=torch.long, device=device)
         mask = torch.ones_like(input_ids)
@@ -268,10 +272,11 @@ class Scheduler:
         new_kv = to_legacy(out.past_key_values)
 
         self.backend.add(request.request_id)
-        if not self._store_with_preemption(request, new_kv):
-            return
+        if not self._store_for_admission(request, new_kv):
+            return False
         request.next_logits = out.logits[:, -1, :].float()
         self._mark_running(request)
+        return True
 
     def _prefill_chunk_tick(self) -> None:
         """Process ONE chunk of ONE prefilling request (FIFO), bounding how
@@ -301,7 +306,7 @@ class Scheduler:
         # The returned cache covers past + chunk; only the chunk is new.
         full = to_legacy(out.past_key_values)
         new_kv = tuple((k[:, :, -len(chunk):, :], v[:, :, -len(chunk):, :]) for k, v in full)
-        if not self._store_with_preemption(request, new_kv):
+        if not self._store_for_admission(request, new_kv):
             return
         if self.backend.seq_len(request.request_id) >= len(request.pending_prefill):
             request.pending_prefill = []
@@ -319,8 +324,27 @@ class Scheduler:
     # preemption
     # ------------------------------------------------------------------
 
-    def _store_with_preemption(self, request: Request, new_kv: LegacyCache) -> bool:
-        """backend.append with eviction on PoolExhausted.
+    def _store_for_admission(self, request: Request, new_kv: LegacyCache) -> bool:
+        """Store prefill output for a request that is being admitted.
+
+        Admissions never evict running work; if the pool is full the
+        newcomer goes back to the front of the queue and waits for decode to
+        free blocks. If nobody else holds blocks and the request STILL does
+        not fit, no amount of waiting will help, so it fails permanently.
+        """
+        try:
+            self.backend.append(request.request_id, new_kv)
+            return True
+        except PoolExhausted as exc:
+            others = [r for r in self.active + self.prefilling if r is not request]
+            if not others:
+                self._fail_request(request, exc)
+                return False
+            self._preempt(request)  # back to the queue front, blocks released
+            return False
+
+    def _store_after_decode(self, request: Request, new_kv: LegacyCache) -> bool:
+        """Store a decode step's new K/V column, evicting if needed.
 
         Victims are the most recently started requests (least work lost).
         The storing request itself can be the victim; its sampled tokens are
@@ -334,23 +358,26 @@ class Scheduler:
             except PoolExhausted as exc:
                 victim = self._pick_victim()
                 if victim is None:
-                    request.state = RequestState.FAILED
-                    request.error = (
-                        f"KV pool too small for this request alone: {exc}. "
-                        "Raise --pool-blocks or --block-size."
-                    )
-                    request.finished_at = time.perf_counter()
-                    self.backend.drop(request.request_id)
-                    if request in self.active:
-                        self.active.remove(request)
-                    if request in self.prefilling:
-                        self.prefilling.remove(request)
-                    request.output_queue.put(("error", request.error))
-                    self._emit("failed", request)
+                    self._fail_request(request, exc)
                     return False
                 self._preempt(victim)
                 if victim is request:
                     return False
+
+    def _fail_request(self, request: Request, exc: Exception) -> None:
+        request.state = RequestState.FAILED
+        request.error = (
+            f"KV pool too small for this request alone: {exc}. "
+            "Raise --pool-blocks or --block-size."
+        )
+        request.finished_at = time.perf_counter()
+        self.backend.drop(request.request_id)
+        if request in self.active:
+            self.active.remove(request)
+        if request in self.prefilling:
+            self.prefilling.remove(request)
+        request.output_queue.put(("error", request.error))
+        self._emit("failed", request)
 
     def _pick_victim(self) -> Request | None:
         candidates = self.active + self.prefilling
@@ -441,7 +468,7 @@ class Scheduler:
             new_kv = tuple(
                 (k[row : row + 1, :, -1:, :], v[row : row + 1, :, -1:, :]) for k, v in returned
             )
-            if self._store_with_preemption(request, new_kv):
+            if self._store_after_decode(request, new_kv):
                 request.next_logits = logits[row : row + 1]
         return produced
 

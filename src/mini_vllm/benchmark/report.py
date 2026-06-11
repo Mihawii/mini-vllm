@@ -164,6 +164,37 @@ def render_markdown(report: dict) -> str:
             "",
         ]
 
+    quant = report.get("quantization")
+    if quant:
+        parts += [
+            "## Dynamic int8 quantization (CPU)",
+            "",
+            "Same greedy workload, fp32 vs dynamically quantized int8 Linear layers.",
+            "Token agreement is the fraction of positions where both variants chose",
+            "the same token; quantization is lossy and this makes the loss visible.",
+            "",
+            _table(
+                ["variant", "avg latency", "throughput", "checkpoint"],
+                [
+                    [
+                        "float32",
+                        f"{quant['float32']['latency_s_avg']:.2f}s",
+                        f"{quant['float32']['throughput_tok_s']:.1f} tok/s",
+                        f"{quant['float32']['checkpoint_mb']:.1f} MB",
+                    ],
+                    [
+                        "int8 dynamic",
+                        f"{quant['int8']['latency_s_avg']:.2f}s",
+                        f"{quant['int8']['throughput_tok_s']:.1f} tok/s",
+                        f"{quant['int8']['checkpoint_mb']:.1f} MB",
+                    ],
+                ],
+            ),
+            "",
+            f"**Latency ratio: {quant['speedup']:.2f}x; greedy token agreement: {quant['token_agreement']:.1%}**",
+            "",
+        ]
+
     parts += [
         "## Conclusions",
         "",
@@ -180,6 +211,11 @@ def render_markdown(report: dict) -> str:
         best = max(batch, key=lambda r: r["throughput_tok_s"])
         parts.append(
             f"- Static batching peaked at {best['throughput_tok_s']:.1f} tok/s with batch size {best['batch_size']}."
+        )
+    if quant:
+        parts.append(
+            f"- int8 cut the checkpoint from {quant['float32']['checkpoint_mb']:.0f} MB to "
+            f"{quant['int8']['checkpoint_mb']:.0f} MB with {quant['token_agreement']:.0%} greedy token agreement."
         )
     parts.append("- Numbers are from a real run on the machine listed above; rerun `mini-vllm bench` to reproduce on yours.")
     return "\n".join(parts) + "\n"

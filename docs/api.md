@@ -99,9 +99,8 @@ curl -N http://127.0.0.1:8000/v1/completions \
 
 ## Chat template handling
 
-If the tokenizer ships a chat template (TinyLlama and most instruct models
-do), it is applied. GPT-2 family models have none, so messages render as a
-plain transcript:
+If the tokenizer ships a chat template, it is applied. GPT-2 family models
+have none, so their messages render as a plain transcript:
 
 ```
 System: You are concise.
@@ -109,9 +108,24 @@ User: What is a KV cache?
 Assistant:
 ```
 
-Base GPT-2 models are not instruction-tuned; the chat endpoint exists for
-API compatibility and template plumbing, and the output quality reflects the
-base model.
+Base GPT-2 models are not instruction-tuned, so for a chat endpoint that
+actually answers questions, serve a small instruct model:
+
+```
+mini-vllm serve --model Qwen/Qwen2.5-0.5B-Instruct
+```
+
+The engine handles its ChatML template, its GQA cache layout (2 KV heads
+against 14 attention heads), and EOS stopping without any model-specific
+code. Verified output on the development machine, greedy:
+
+> User: In one sentence, what does a KV cache do in an LLM server?
+> Assistant: A KV cache in an LLM server stores frequently accessed data in
+> memory to improve response times.
+
+Expect about 2 to 3 tok/s for this 0.5B model on an M1 CPU in float32 (the
+download is roughly 1 GB). MPS measured slower than CPU here, so the CPU
+default stands.
 
 ## Errors
 

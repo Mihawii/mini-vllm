@@ -130,6 +130,9 @@ async def metrics(http: HttpRequest) -> dict:
         "active": len(ctx.scheduler.active),
         "queue_depth": ctx.scheduler.queue_depth(),
         "ticks": len(ctx.scheduler.ticks),
+        "preemptions": ctx.scheduler.preemption_count,
+        "prefill_chunk_size": ctx.scheduler.prefill_chunk_size,
+        "cache": ctx.scheduler.backend.memory_stats(),
     }
     return snap
 

@@ -80,6 +80,16 @@ Then open http://127.0.0.1:8000/dashboard and click through the four tabs.
 
 Say: OpenAI-style API, SSE streaming, live metrics, dashboard.
 
+## Scene 6b: paged cache and preemption (10 s, optional)
+
+```bash
+uv run mini-vllm simulate examples/traffic.json --model distilbert/distilgpt2 \
+    --cache-backend paged --block-size 16 --pool-blocks 24 --prefill-chunk-size 32
+```
+
+Say: cache memory is a pool of blocks; squeeze the pool and watch requests
+get preempted and recover with identical output.
+
 ## Scene 7: receipts (10 s)
 
 ```bash

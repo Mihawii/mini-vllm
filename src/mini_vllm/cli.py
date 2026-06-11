@@ -38,7 +38,7 @@ def _quiet_transformers() -> None:
     transformers.logging.set_verbosity_error()
 
 
-def _load_engine(model: str, device: str, dtype: str):
+def _load_engine(model: str, device: str, dtype: str, quantize: str | None = None):
     """Load a model behind a spinner and wrap it in a GenerationEngine."""
     from mini_vllm.engine.generation import GenerationEngine
     from mini_vllm.engine.model_loader import ModelLoadError, load_model
@@ -46,7 +46,7 @@ def _load_engine(model: str, device: str, dtype: str):
     _quiet_transformers()
     try:
         with console.status(f"[bold cyan]Loading {model}..."):
-            loaded = load_model(model, device=device, dtype=dtype)
+            loaded = load_model(model, device=device, dtype=dtype, quantize=quantize)
     except (ModelLoadError, ValueError) as exc:
         console.print(f"[bold red]Error:[/] {exc}")
         raise typer.Exit(code=1) from exc
@@ -172,6 +172,7 @@ def generate(
     kv_cache: bool = typer.Option(True, "--kv-cache/--no-kv-cache", help="Toggle the KV cache."),
     device: str = typer.Option("auto"),
     dtype: str = typer.Option("auto"),
+    quantize: str = typer.Option(None, help="int8 = dynamic int8 quantization (CPU only)."),
     engine_mode: str = typer.Option(
         "native", "--engine", help="native = our decode loop, hf = model.generate() fallback."
     ),
@@ -179,7 +180,7 @@ def generate(
     """Generate a completion with the custom decoding loop."""
     from mini_vllm.engine.generation import PromptTooLongError
 
-    engine = _load_engine(model, device, dtype)
+    engine = _load_engine(model, device, dtype, quantize=quantize)
     params = _sampling_params(max_new_tokens, temperature, top_k, top_p, repetition_penalty, stop, seed)
 
     try:
@@ -265,6 +266,10 @@ def simulate(
     max_batch_size: int = typer.Option(4, help="Scheduler slot count."),
     temperature: float = typer.Option(0.8),
     seed: int = typer.Option(0, help="Seed shared by all simulated requests."),
+    cache_backend: str = typer.Option("contiguous", help="KV storage: contiguous | paged."),
+    block_size: int = typer.Option(16, help="Tokens per block (paged backend)."),
+    pool_blocks: int = typer.Option(256, help="Total blocks in the pool (paged backend)."),
+    prefill_chunk_size: int = typer.Option(0, help="Prefill chunk in tokens (0 = off)."),
     out_dir: Path = typer.Option(Path("logs/simulations"), help="Where JSONL metrics land."),
     device: str = typer.Option("auto"),
     dtype: str = typer.Option("auto"),
@@ -285,7 +290,14 @@ def simulate(
     spec = json.loads(traffic_file.read_text())
 
     engine = _load_engine(model, device, dtype)
-    scheduler = Scheduler(engine, max_batch_size=max_batch_size)
+    scheduler = Scheduler(
+        engine,
+        max_batch_size=max_batch_size,
+        cache_backend=cache_backend,
+        block_size=block_size,
+        pool_blocks=pool_blocks,
+        prefill_chunk_size=prefill_chunk_size,
+    )
 
     pending: list[tuple[float, Request]] = []
     for i, item in enumerate(spec):
@@ -339,27 +351,41 @@ def simulate(
 
     # ---- batch occupancy timeline ----
     ticks = scheduler.ticks
+    paged = cache_backend == "paged"
     shown = ticks if len(ticks) <= 28 else [ticks[i] for i in range(0, len(ticks), len(ticks) // 28 + 1)]
     timeline = Table(title="[bold cyan]Scheduler ticks  (█ active  ░ queued)", border_style="dim")
     timeline.add_column("t (ms)", justify="right")
     timeline.add_column("active", justify="right")
     timeline.add_column("queue", justify="right")
     timeline.add_column("cache len", justify="right")
+    if paged:
+        timeline.add_column("pool blocks", justify="right")
     timeline.add_column("batch")
     for tk in shown:
-        timeline.add_row(
+        row = [
             f"{tk.t_ms:.0f}", str(tk.active), str(tk.queue_depth), str(tk.cache_len),
-            "[green]" + "█" * tk.active + "[/][yellow]" + "░" * tk.queue_depth,
-        )
+        ]
+        if paged:
+            row.append(f"[magenta]{tk.pool_used_blocks}[/] ({tk.pool_utilization:.0%})")
+        row.append("[green]" + "█" * tk.active + "[/][yellow]" + "░" * tk.queue_depth)
+        timeline.add_row(*row)
     console.print(timeline)
 
     total_tokens = sum(len(r.generated) for r in requests)
     busy = [tk.active for tk in ticks if tk.active > 0]
     avg_active = sum(busy) / len(busy) if busy else 0.0
+    pool = scheduler.backend.memory_stats()
+    extra = f"   [bold]preemptions[/] {scheduler.preemption_count}" if scheduler.preemption_count else ""
+    if pool.get("backend") == "paged":
+        peak = max((tk.pool_used_blocks for tk in ticks), default=0)
+        extra += (
+            f"   [bold]pool peak[/] {peak}/{pool['num_blocks']} blocks "
+            f"({pool['block_size']} tok each)"
+        )
     console.print(
         f"[bold]makespan[/] {makespan_ms:.0f} ms   [bold]tokens[/] {total_tokens}   "
         f"[bold]throughput[/] {total_tokens / (makespan_ms / 1000):.1f} tok/s   "
-        f"[bold]avg active batch[/] {avg_active:.2f}   [bold]ticks[/] {len(ticks)}"
+        f"[bold]avg active batch[/] {avg_active:.2f}   [bold]ticks[/] {len(ticks)}" + extra
     )
 
     # ---- persist metrics ----
@@ -373,6 +399,9 @@ def simulate(
         "total_tokens": total_tokens,
         "throughput_tok_s": round(total_tokens / (makespan_ms / 1000), 2),
         "avg_active_batch": round(avg_active, 2),
+        "preemptions": scheduler.preemption_count,
+        "prefill_chunk_size": prefill_chunk_size,
+        "pool": pool,
         "requests": [
             {
                 "id": req.request_id,
@@ -409,6 +438,9 @@ def bench(
     compare_kv_cache: bool = typer.Option(
         True, "--compare-kv-cache/--no-compare-kv-cache", help="Measure cache on vs off."
     ),
+    compare_quantize: bool = typer.Option(
+        False, "--compare-quantize", help="Also measure dynamic int8 vs fp32 (CPU only)."
+    ),
     batch_sizes: str = typer.Option("1,2,4,8", help="Comma-separated static batch sizes."),
     prompt_lengths: str = typer.Option(
         "", help="Comma-separated prompt token counts for the prefill sweep (empty = skip)."
@@ -434,6 +466,7 @@ def bench(
             compare_kv_cache=compare_kv_cache,
             batch_sizes=sizes,
             prompt_lengths=lengths or None,
+            compare_quantize=compare_quantize,
             on_progress=lambda label: status.update(f"[bold cyan]Benchmarking: {label}..."),
         )
     json_path, csv_path = save_results(report, out_dir)
@@ -479,6 +512,10 @@ def serve(
     host: str = typer.Option("127.0.0.1", help="Bind address (0.0.0.0 to expose)."),
     port: int = typer.Option(8000),
     max_batch_size: int = typer.Option(8, help="Continuous batching slot count."),
+    cache_backend: str = typer.Option("contiguous", help="KV storage: contiguous | paged."),
+    block_size: int = typer.Option(16, help="Tokens per block (paged backend)."),
+    pool_blocks: int = typer.Option(256, help="Total blocks in the pool (paged backend)."),
+    prefill_chunk_size: int = typer.Option(0, help="Prefill chunk in tokens (0 = whole prompt at once)."),
     device: str = typer.Option("auto"),
     dtype: str = typer.Option("auto"),
 ) -> None:
@@ -494,6 +531,10 @@ def serve(
         host=host,
         port=port,
         max_batch_size=max_batch_size,
+        cache_backend=cache_backend,
+        block_size=block_size,
+        pool_blocks=pool_blocks,
+        prefill_chunk_size=prefill_chunk_size,
     )
     console.print(
         f"[bold cyan]mini-vLLM[/] serving [bold]{model}[/] at "

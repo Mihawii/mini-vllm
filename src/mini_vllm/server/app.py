@@ -54,7 +54,13 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
         engine = GenerationEngine(loaded)
         collector = MetricsCollector()
         scheduler = Scheduler(
-            engine, max_batch_size=config.max_batch_size, on_event=collector.on_event
+            engine,
+            max_batch_size=config.max_batch_size,
+            on_event=collector.on_event,
+            cache_backend=config.cache_backend,
+            block_size=config.block_size,
+            pool_blocks=config.pool_blocks,
+            prefill_chunk_size=config.prefill_chunk_size,
         )
         loop = SchedulerLoop(scheduler)
         loop.start()

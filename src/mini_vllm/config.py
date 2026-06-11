@@ -26,6 +26,10 @@ class EngineConfig:
     port: int = 8000
     max_batch_size: int = 8
     log_dir: str = "logs"
+    cache_backend: str = "contiguous"  # or "paged"
+    block_size: int = 16
+    pool_blocks: int = 256
+    prefill_chunk_size: int = 0  # 0 disables chunked prefill
 
     @classmethod
     def from_env(cls) -> EngineConfig:
@@ -37,4 +41,8 @@ class EngineConfig:
             port=int(_env("PORT", "8000")),
             max_batch_size=int(_env("MAX_BATCH_SIZE", "8")),
             log_dir=_env("LOG_DIR", "logs"),
+            cache_backend=_env("CACHE_BACKEND", "contiguous"),
+            block_size=int(_env("BLOCK_SIZE", "16")),
+            pool_blocks=int(_env("POOL_BLOCKS", "256")),
+            prefill_chunk_size=int(_env("PREFILL_CHUNK_SIZE", "0")),
         )
