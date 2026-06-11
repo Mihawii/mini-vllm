@@ -86,7 +86,7 @@ decode step instead of waiting in line. The design is documented in
 ## Quick start
 
 ```bash
-git clone https://github.com/<you>/mini-vllm.git
+git clone https://github.com/Mihawii/mini-vllm.git
 cd mini-vllm
 uv sync
 
