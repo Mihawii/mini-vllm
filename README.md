@@ -5,7 +5,7 @@
 ![Python](https://img.shields.io/badge/python-3.11%2B-blue)
 ![PyTorch](https://img.shields.io/badge/PyTorch-2.x-ee4c2c)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.115%2B-009688)
-![Tests](https://img.shields.io/badge/tests-74%20passing-brightgreen)
+[![CI](https://github.com/Mihawii/mini-vllm/actions/workflows/ci.yml/badge.svg)](https://github.com/Mihawii/mini-vllm/actions/workflows/ci.yml)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey)
 
 mini-vLLM is a from-scratch inference server built to understand how systems
