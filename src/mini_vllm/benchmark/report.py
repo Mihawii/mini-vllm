@@ -164,6 +164,62 @@ def render_markdown(report: dict) -> str:
             "",
         ]
 
+    baselines = report.get("baselines")
+    if baselines:
+        parts += [
+            "## Three baselines",
+            "",
+            "Same prompts, greedy decoding, identical work per request. TTFT is",
+            "not separable for `model.generate()` (it is a black box), so that",
+            "cell is empty.",
+            "",
+            _table(
+                ["baseline", "ttft p50", "avg latency", "p95", "tok/s per req", "throughput"],
+                [
+                    [
+                        row["baseline"],
+                        f"{row['ttft_ms_p50']:.0f} ms" if row["ttft_ms_p50"] else "n/a",
+                        f"{row['latency_s_avg']:.2f}s",
+                        f"{row['latency_s_p95']:.2f}s",
+                        f"{row['tok_s_per_request']:.1f}",
+                        f"{row['throughput_tok_s']:.1f}",
+                    ]
+                    for row in baselines
+                ],
+            ),
+            "",
+        ]
+
+    spec = report.get("speculative")
+    if spec:
+        parts += [
+            "## Speculative decoding",
+            "",
+            f"Draft: {spec['draft']}, gamma = {spec['gamma']}, greedy. Outputs are",
+            "verified identical to plain target decoding inside the benchmark, so",
+            "the timing difference is the entire story.",
+            "",
+            _table(
+                ["mode", "avg latency", "throughput"],
+                [
+                    [
+                        "plain target",
+                        f"{spec['plain_target']['latency_s_avg']:.2f}s",
+                        f"{spec['plain_target']['throughput_tok_s']:.1f} tok/s",
+                    ],
+                    [
+                        "speculative",
+                        f"{spec['speculative']['latency_s_avg']:.2f}s",
+                        f"{spec['speculative']['throughput_tok_s']:.1f} tok/s",
+                    ],
+                ],
+            ),
+            "",
+            f"**Latency ratio: {spec['speedup']:.2f}x; acceptance rate: {spec['acceptance_rate']:.0%}; "
+            f"avg target forwards per request: {spec['avg_target_forwards_per_request']}**",
+            "",
+        ]
+
     quant = report.get("quantization")
     if quant:
         parts += [
@@ -216,6 +272,12 @@ def render_markdown(report: dict) -> str:
         parts.append(
             f"- int8 cut the checkpoint from {quant['float32']['checkpoint_mb']:.0f} MB to "
             f"{quant['int8']['checkpoint_mb']:.0f} MB with {quant['token_agreement']:.0%} greedy token agreement."
+        )
+    if spec:
+        direction = "faster" if spec["speedup"] >= 1 else "slower"
+        parts.append(
+            f"- Speculative decoding ran {spec['speedup']:.2f}x ({direction}) with "
+            f"{spec['acceptance_rate']:.0%} acceptance; output verified identical to the target."
         )
     parts.append("- Numbers are from a real run on the machine listed above; rerun `mini-vllm bench` to reproduce on yours.")
     return "\n".join(parts) + "\n"

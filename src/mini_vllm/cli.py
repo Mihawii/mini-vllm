@@ -173,6 +173,10 @@ def generate(
     device: str = typer.Option("auto"),
     dtype: str = typer.Option("auto"),
     quantize: str = typer.Option(None, help="int8 = dynamic int8 quantization (CPU only)."),
+    draft_model: str = typer.Option(
+        None, "--draft-model", help="Enable speculative decoding with this draft model."
+    ),
+    gamma: int = typer.Option(4, help="Draft tokens proposed per speculative round."),
     engine_mode: str = typer.Option(
         "native", "--engine", help="native = our decode loop, hf = model.generate() fallback."
     ),
@@ -182,6 +186,26 @@ def generate(
 
     engine = _load_engine(model, device, dtype, quantize=quantize)
     params = _sampling_params(max_new_tokens, temperature, top_k, top_p, repetition_penalty, stop, seed)
+
+    if draft_model:
+        from mini_vllm.engine.speculative import SpeculativeEngine
+
+        draft = _load_engine(draft_model, device, dtype)
+        try:
+            spec = SpeculativeEngine(target=engine, draft=draft, gamma=gamma)
+            result, spec_stats = spec.generate(prompt, params)
+        except ValueError as exc:
+            console.print(f"[bold red]Error:[/] {exc}")
+            raise typer.Exit(code=1) from exc
+        console.print(Panel(result.text or "[dim](empty)", title="[bold]speculative completion", border_style="cyan"))
+        console.print(_stats_line(result))
+        console.print(
+            f"[dim]draft[/] [bold]{draft_model}[/]   [dim]gamma[/] [bold]{gamma}[/]   "
+            f"[dim]acceptance[/] [bold]{spec_stats.acceptance_rate:.0%}[/]   "
+            f"[dim]target forwards[/] [bold]{spec_stats.target_forwards}[/] "
+            f"[dim]for[/] [bold]{result.completion_tokens}[/] [dim]tokens[/]"
+        )
+        return
 
     try:
         if engine_mode == "hf":
@@ -446,6 +470,13 @@ def bench(
     compare_quantize: bool = typer.Option(
         False, "--compare-quantize", help="Also measure dynamic int8 vs fp32 (CPU only)."
     ),
+    baselines: bool = typer.Option(
+        False, "--baselines", help="Compare HF generate(), no-cache, cached, and batched."
+    ),
+    speculative_draft: str = typer.Option(
+        None, "--speculative-draft", help="Measure speculative decoding with this draft model."
+    ),
+    gamma: int = typer.Option(4, help="Draft tokens per speculative round."),
     batch_sizes: str = typer.Option("1,2,4,8", help="Comma-separated static batch sizes."),
     prompt_lengths: str = typer.Option(
         "", help="Comma-separated prompt token counts for the prefill sweep (empty = skip)."
@@ -472,6 +503,9 @@ def bench(
             batch_sizes=sizes,
             prompt_lengths=lengths or None,
             compare_quantize=compare_quantize,
+            baselines=baselines,
+            speculative_draft=speculative_draft,
+            gamma=gamma,
             on_progress=lambda label: status.update(f"[bold cyan]Benchmarking: {label}..."),
         )
     json_path, csv_path = save_results(report, out_dir)

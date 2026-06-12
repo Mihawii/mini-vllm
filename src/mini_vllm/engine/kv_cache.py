@@ -118,6 +118,16 @@ def select_rows(legacy: LegacyCache, keep: torch.Tensor) -> LegacyCache:
     return tuple((k[keep], v[keep]) for k, v in legacy)
 
 
+def slice_cache(legacy: LegacyCache, length: int) -> LegacyCache:
+    """Truncate the sequence dimension to the first `length` positions.
+
+    Speculative decoding uses this to roll the cache back after rejecting
+    draft tokens: their K/V entries become invalid the moment a different
+    token is committed at that position.
+    """
+    return tuple((k[:, :, :length, :], v[:, :, :length, :]) for k, v in legacy)
+
+
 def trim_left_padding(
     legacy: LegacyCache, mask: torch.Tensor
 ) -> tuple[LegacyCache, torch.Tensor]:

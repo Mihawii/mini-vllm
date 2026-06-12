@@ -181,6 +181,117 @@ def run_concurrency(
     return {"sequential": sequential, "batched": batched, "speedup": round(speedup, 2)}
 
 
+def run_baselines(
+    engine: GenerationEngine, requests: int, max_new_tokens: int, concurrency: int
+) -> list[dict]:
+    """The three-baseline table: Hugging Face generate(), our engine without
+    the KV cache, our engine with it, and the scheduler with batching. Same
+    prompts, greedy decoding, so every row does identical work per request.
+    TTFT for hf_generate is not separable (generate() is a black box), so
+    that cell is reported as None."""
+    prompts = [DEFAULT_PROMPTS[i % len(DEFAULT_PROMPTS)] for i in range(requests)]
+    rows: list[dict] = []
+
+    def summarize(label, latencies, tokens, ttfts, makespan):
+        ordered = sorted(latencies)
+        total_tokens = sum(tokens)
+        return {
+            "baseline": label,
+            "ttft_ms_p50": round(percentile(sorted(ttfts), 0.5) * 1000, 1) if ttfts else None,
+            "latency_s_avg": round(sum(ordered) / len(ordered), 4),
+            "latency_s_p95": round(percentile(ordered, 0.95), 4),
+            "tok_s_per_request": round(total_tokens / sum(latencies), 2),
+            "throughput_tok_s": round(total_tokens / makespan, 2),
+        }
+
+    # 1) Hugging Face model.generate() reference (its own cache enabled)
+    lat, toks = [], []
+    start = time.perf_counter()
+    for p in prompts:
+        r = engine.generate_hf(p, _greedy(max_new_tokens))
+        lat.append(r.latency_s)
+        toks.append(r.completion_tokens)
+    rows.append(summarize("hf_generate", lat, toks, [], time.perf_counter() - start))
+
+    # 2) our loop, no KV cache (the O(T^2) floor)
+    lat, toks, ttfts = [], [], []
+    start = time.perf_counter()
+    for p in prompts:
+        r = engine.generate(p, _greedy(max_new_tokens), use_kv_cache=False)
+        lat.append(r.latency_s)
+        toks.append(r.completion_tokens)
+        ttfts.append(r.prefill_s)
+    rows.append(summarize("mini_vllm_no_cache", lat, toks, ttfts, time.perf_counter() - start))
+
+    # 3) our loop with the KV cache
+    lat, toks, ttfts = [], [], []
+    start = time.perf_counter()
+    for p in prompts:
+        r = engine.generate(p, _greedy(max_new_tokens))
+        lat.append(r.latency_s)
+        toks.append(r.completion_tokens)
+        ttfts.append(r.prefill_s)
+    rows.append(summarize("mini_vllm_cached", lat, toks, ttfts, time.perf_counter() - start))
+
+    # 4) the scheduler with continuous batching, all requests at once
+    scheduler = Scheduler(engine, max_batch_size=concurrency)
+    reqs = [Request(prompt=p, params=_greedy(max_new_tokens)) for p in prompts]
+    start = time.perf_counter()
+    for r in reqs:
+        scheduler.submit(r)
+    while scheduler.has_work():
+        scheduler.step()
+    makespan = time.perf_counter() - start
+    lat = [r.finished_at - r.submitted_at for r in reqs]
+    toks = [len(r.generated) for r in reqs]
+    ttfts = [r.ttft_s or 0.0 for r in reqs]
+    rows.append(summarize(f"mini_vllm_batched_x{concurrency}", lat, toks, ttfts, makespan))
+    return rows
+
+
+def run_speculative(
+    engine: GenerationEngine, draft_name: str, requests: int, max_new_tokens: int, gamma: int
+) -> dict:
+    """Speculative decoding vs plain target decoding, greedy (so the outputs
+    are provably identical and the timing comparison is fair)."""
+    from mini_vllm.engine.model_loader import load_model
+    from mini_vllm.engine.speculative import SpeculativeEngine
+
+    draft = GenerationEngine(
+        load_model(draft_name, device=str(engine.device), dtype="float32")
+    )
+    spec = SpeculativeEngine(target=engine, draft=draft, gamma=gamma)
+
+    plain_lat, plain_toks = [], []
+    spec_lat, spec_toks = [], []
+    acceptance, forwards = [], []
+    for i in range(requests):
+        prompt = DEFAULT_PROMPTS[i % len(DEFAULT_PROMPTS)]
+        plain = engine.generate(prompt, _greedy(max_new_tokens))
+        plain_lat.append(plain.latency_s)
+        plain_toks.append(plain.completion_tokens)
+        result, stats = spec.generate(prompt, _greedy(max_new_tokens))
+        assert result.token_ids == plain.token_ids, "speculative output diverged from target"
+        spec_lat.append(result.latency_s)
+        spec_toks.append(result.completion_tokens)
+        acceptance.append(stats.acceptance_rate)
+        forwards.append(stats.target_forwards)
+
+    plain = _stats(plain_lat, plain_toks)
+    speculative = _stats(spec_lat, spec_toks)
+    return {
+        "draft": draft_name,
+        "gamma": gamma,
+        "plain_target": plain,
+        "speculative": speculative,
+        "acceptance_rate": round(sum(acceptance) / len(acceptance), 3),
+        "avg_target_forwards_per_request": round(sum(forwards) / len(forwards), 1),
+        "speedup": round(plain["latency_s_avg"] / speculative["latency_s_avg"], 2)
+        if speculative["latency_s_avg"] > 0
+        else 0.0,
+    }
+
+
 def run_quantize_compare(model_name: str, requests: int, max_new_tokens: int) -> dict:
     """fp32 vs dynamic int8 on CPU: speed, checkpoint size, and how much the
     greedy output actually changes (token agreement)."""
@@ -260,6 +371,9 @@ def run_benchmark(
     batch_sizes: list[int] | None = None,
     prompt_lengths: list[int] | None = None,
     compare_quantize: bool = False,
+    baselines: bool = False,
+    speculative_draft: str | None = None,
+    gamma: int = 4,
     on_progress=None,
 ) -> dict:
     def progress(label: str) -> None:
@@ -306,6 +420,17 @@ def run_benchmark(
         q_requests = max(min(requests, 5), 2)
         report["quantization"] = run_quantize_compare(engine.lm.name, q_requests, max_new_tokens)
 
+    if baselines:
+        progress("three-baseline comparison")
+        report["baselines"] = run_baselines(engine, requests, max_new_tokens, concurrency)
+
+    if speculative_draft:
+        progress(f"speculative decoding ({speculative_draft} drafting)")
+        s_requests = max(min(requests, 5), 2)
+        report["speculative"] = run_speculative(
+            engine, speculative_draft, s_requests, max_new_tokens, gamma
+        )
+
     return report
 
 
@@ -345,6 +470,15 @@ def save_results(report: dict, out_dir: str | Path = "benchmarks/results") -> tu
         add("quantization", "summary", {
             "speedup": report["quantization"]["speedup"],
             "token_agreement": report["quantization"]["token_agreement"],
+        })
+    for row in report.get("baselines", []):
+        add("baselines", row["baseline"], row)
+    if "speculative" in report:
+        add("speculative", "plain_target", report["speculative"]["plain_target"])
+        add("speculative", "speculative", report["speculative"]["speculative"])
+        add("speculative", "summary", {
+            "speedup": report["speculative"]["speedup"],
+            "acceptance_rate": report["speculative"]["acceptance_rate"],
         })
 
     fieldnames: list[str] = []
