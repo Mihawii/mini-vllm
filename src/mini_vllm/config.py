@@ -30,6 +30,7 @@ class EngineConfig:
     block_size: int = 16
     pool_blocks: int = 256
     prefill_chunk_size: int = 0  # 0 disables chunked prefill
+    prefix_caching: bool = False  # paged backend only
 
     @classmethod
     def from_env(cls) -> EngineConfig:
@@ -45,4 +46,5 @@ class EngineConfig:
             block_size=int(_env("BLOCK_SIZE", "16")),
             pool_blocks=int(_env("POOL_BLOCKS", "256")),
             prefill_chunk_size=int(_env("PREFILL_CHUNK_SIZE", "0")),
+            prefix_caching=_env("PREFIX_CACHING", "0") in ("1", "true", "yes"),
         )

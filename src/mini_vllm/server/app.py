@@ -61,6 +61,7 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
             block_size=config.block_size,
             pool_blocks=config.pool_blocks,
             prefill_chunk_size=config.prefill_chunk_size,
+            enable_prefix_caching=config.prefix_caching,
         )
         loop = SchedulerLoop(scheduler)
         loop.start()

@@ -270,6 +270,7 @@ def simulate(
     block_size: int = typer.Option(16, help="Tokens per block (paged backend)."),
     pool_blocks: int = typer.Option(256, help="Total blocks in the pool (paged backend)."),
     prefill_chunk_size: int = typer.Option(0, help="Prefill chunk in tokens (0 = off)."),
+    prefix_caching: bool = typer.Option(False, "--prefix-caching/--no-prefix-caching", help="Reuse KV blocks across shared prefixes (paged backend)."),
     out_dir: Path = typer.Option(Path("logs/simulations"), help="Where JSONL metrics land."),
     device: str = typer.Option("auto"),
     dtype: str = typer.Option("auto"),
@@ -297,6 +298,7 @@ def simulate(
         block_size=block_size,
         pool_blocks=pool_blocks,
         prefill_chunk_size=prefill_chunk_size,
+        enable_prefix_caching=prefix_caching,
     )
 
     pending: list[tuple[float, Request]] = []
@@ -382,6 +384,9 @@ def simulate(
             f"   [bold]pool peak[/] {peak}/{pool['num_blocks']} blocks "
             f"({pool['block_size']} tok each)"
         )
+        prefix = pool.get("prefix")
+        if prefix and prefix["hit_tokens"]:
+            extra += f"   [bold]prefix hits[/] {prefix['hit_tokens']} tok reused"
     console.print(
         f"[bold]makespan[/] {makespan_ms:.0f} ms   [bold]tokens[/] {total_tokens}   "
         f"[bold]throughput[/] {total_tokens / (makespan_ms / 1000):.1f} tok/s   "
@@ -516,6 +521,7 @@ def serve(
     block_size: int = typer.Option(16, help="Tokens per block (paged backend)."),
     pool_blocks: int = typer.Option(256, help="Total blocks in the pool (paged backend)."),
     prefill_chunk_size: int = typer.Option(0, help="Prefill chunk in tokens (0 = whole prompt at once)."),
+    prefix_caching: bool = typer.Option(False, "--prefix-caching/--no-prefix-caching", help="Reuse KV blocks across shared prompt prefixes (paged backend)."),
     device: str = typer.Option("auto"),
     dtype: str = typer.Option("auto"),
 ) -> None:
@@ -535,6 +541,7 @@ def serve(
         block_size=block_size,
         pool_blocks=pool_blocks,
         prefill_chunk_size=prefill_chunk_size,
+        prefix_caching=prefix_caching,
     )
     console.print(
         f"[bold cyan]mini-vLLM[/] serving [bold]{model}[/] at "

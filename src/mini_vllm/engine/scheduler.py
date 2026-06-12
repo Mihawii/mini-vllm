@@ -162,12 +162,19 @@ class Scheduler:
         block_size: int = 16,
         pool_blocks: int = 256,
         prefill_chunk_size: int = 0,
+        enable_prefix_caching: bool = False,
     ):
         self.engine = engine
         self.max_batch_size = max_batch_size
         self.on_event = on_event  # callback(name, request) for metrics
-        self.backend = make_backend(cache_backend, block_size=block_size, num_blocks=pool_blocks)
+        self.backend = make_backend(
+            cache_backend,
+            block_size=block_size,
+            num_blocks=pool_blocks,
+            enable_prefix_caching=enable_prefix_caching,
+        )
         self.prefill_chunk_size = prefill_chunk_size
+        self.enable_prefix_caching = enable_prefix_caching and cache_backend == "paged"
 
         self._waiting: deque[Request] = deque()
         self._waiting_lock = threading.Lock()
@@ -251,10 +258,21 @@ class Scheduler:
             # Recompute mode after preemption: everything generated so far
             # becomes part of the text to prefill, so no work is re-sampled.
             ids = request.prompt_ids + request.generated
-            if self.prefill_chunk_size > 0 and len(ids) > self.prefill_chunk_size:
+            self.backend.add(request.request_id)
+            matched = 0
+            if self.enable_prefix_caching:
+                # Reuse cached blocks for the shared prefix. At least one
+                # token is always left for real prefill: the model still has
+                # to produce next-token logits, and the request needs a
+                # private (unshared) tail block to write into.
+                matched = self.backend.match_prefix(
+                    request.request_id, ids, max_tokens=len(ids) - 1
+                )
+            if matched or (self.prefill_chunk_size > 0 and len(ids) > self.prefill_chunk_size):
+                # Suffix prefill rides the chunked-prefill machinery: the
+                # matched prefix counts as already-done work.
                 request.pending_prefill = ids
                 request.state = RequestState.PREFILLING
-                self.backend.add(request.request_id)
                 self.prefilling.append(request)
             elif not self._prefill_full(request, ids):
                 # The pool has no room for newcomers. Admissions never evict
@@ -271,8 +289,7 @@ class Scheduler:
         out = self.engine.model(input_ids=input_ids, attention_mask=mask, use_cache=True)
         new_kv = to_legacy(out.past_key_values)
 
-        self.backend.add(request.request_id)
-        if not self._store_for_admission(request, new_kv):
+        if not self._store_for_admission(request, new_kv, ids):
             return False
         request.next_logits = out.logits[:, -1, :].float()
         self._mark_running(request)
@@ -284,7 +301,10 @@ class Scheduler:
         request = self.prefilling[0]
         device = self.engine.device
         done = self.backend.seq_len(request.request_id)
-        chunk = request.pending_prefill[done : done + self.prefill_chunk_size]
+        # chunk size 0 means "no chunking": this path is then only reached
+        # via a prefix-cache hit, and the whole suffix runs in one pass.
+        step = self.prefill_chunk_size or len(request.pending_prefill)
+        chunk = request.pending_prefill[done : done + step]
 
         input_ids = torch.tensor([chunk], dtype=torch.long, device=device)
         mask = torch.ones((1, done + len(chunk)), dtype=torch.long, device=device)
@@ -306,7 +326,7 @@ class Scheduler:
         # The returned cache covers past + chunk; only the chunk is new.
         full = to_legacy(out.past_key_values)
         new_kv = tuple((k[:, :, -len(chunk):, :], v[:, :, -len(chunk):, :]) for k, v in full)
-        if not self._store_for_admission(request, new_kv):
+        if not self._store_for_admission(request, new_kv, chunk):
             return
         if self.backend.seq_len(request.request_id) >= len(request.pending_prefill):
             request.pending_prefill = []
@@ -324,7 +344,9 @@ class Scheduler:
     # preemption
     # ------------------------------------------------------------------
 
-    def _store_for_admission(self, request: Request, new_kv: LegacyCache) -> bool:
+    def _store_for_admission(
+        self, request: Request, new_kv: LegacyCache, tokens: list[int]
+    ) -> bool:
         """Store prefill output for a request that is being admitted.
 
         Admissions never evict running work; if the pool is full the
@@ -333,7 +355,7 @@ class Scheduler:
         not fit, no amount of waiting will help, so it fails permanently.
         """
         try:
-            self.backend.append(request.request_id, new_kv)
+            self.backend.append(request.request_id, new_kv, tokens)
             return True
         except PoolExhausted as exc:
             others = [r for r in self.active + self.prefilling if r is not request]
@@ -343,7 +365,9 @@ class Scheduler:
             self._preempt(request)  # back to the queue front, blocks released
             return False
 
-    def _store_after_decode(self, request: Request, new_kv: LegacyCache) -> bool:
+    def _store_after_decode(
+        self, request: Request, new_kv: LegacyCache, tokens: list[int]
+    ) -> bool:
         """Store a decode step's new K/V column, evicting if needed.
 
         Victims are the most recently started requests (least work lost).
@@ -353,7 +377,7 @@ class Scheduler:
         """
         while True:
             try:
-                self.backend.append(request.request_id, new_kv)
+                self.backend.append(request.request_id, new_kv, tokens)
                 return True
             except PoolExhausted as exc:
                 victim = self._pick_victim()
@@ -468,7 +492,7 @@ class Scheduler:
             new_kv = tuple(
                 (k[row : row + 1, :, -1:, :], v[row : row + 1, :, -1:, :]) for k, v in returned
             )
-            if self._store_after_decode(request, new_kv):
+            if self._store_after_decode(request, new_kv, [request.generated[-1]]):
                 request.next_logits = logits[row : row + 1]
         return produced
 
