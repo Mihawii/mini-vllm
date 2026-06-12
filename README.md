@@ -26,6 +26,13 @@ runbook for rerunning the benchmarks on a rented GPU.
 The long-form story of building it, including the two best bugs, is in
 [the write-up](docs/writeup-kv-cache-and-continuous-batching.md).
 
+## Demo
+
+A 2-minute silent walkthrough lives at
+[docs/assets/demo.mp4](docs/assets/demo.mp4) (GitHub plays it from the file
+view). It is built entirely by script from a live server; see
+[docs/demo_video.md](docs/demo_video.md).
+
 ## Screenshots
 
 ### Playground (live SSE streaming)

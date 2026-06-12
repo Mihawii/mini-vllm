@@ -1,0 +1,9 @@
+<!doctype html><meta charset="utf-8"><style>
+body{margin:0;width:1280px;height:720px;background:#f1efe8;color:#3a352c;display:flex;flex-direction:column;justify-content:center;padding:0 110px;box-sizing:border-box;font-family:-apple-system,system-ui,sans-serif}
+h2{font:700 44px ui-monospace,Menlo,monospace;margin:0}
+p{font-size:24px;color:#6e675b;margin:16px 0 0;max-width:880px;line-height:1.5}
+b{color:#c2410c}
+</style><h2>Continuous batching</h2>
+<p>Requests join and leave the live batch <b>every model step</b>. Cache memory
+comes from a paged block pool; when it fills, the newest request is preempted
+and recomputed later with <b>zero output loss</b>.</p>

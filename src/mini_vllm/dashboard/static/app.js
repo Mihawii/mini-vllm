@@ -286,6 +286,21 @@ async function loadBenchmarks() {
     <tr><td>settings</td><td>requests=${r.settings.requests}, max_new_tokens=${r.settings.max_new_tokens}</td></tr>
   </table></div>`);
 
+  if (r.baselines?.length) {
+    const rows = r.baselines
+      .map(
+        (b) =>
+          `<tr><td>${b.baseline}</td><td class="num">${b.ttft_ms_p50 ?? "n/a"}</td>` +
+          `<td class="num">${b.latency_s_avg.toFixed(2)}s</td>` +
+          `<td class="num">${b.tok_s_per_request.toFixed(1)}</td>` +
+          `<td class="num"><b>${b.throughput_tok_s.toFixed(1)}</b></td></tr>`
+      )
+      .join("");
+    cards.push(`<div class="card"><h3>Three baselines (greedy, identical prompts)</h3>
+      <table><thead><tr><th>baseline</th><th class="num">ttft p50 ms</th><th class="num">avg latency</th><th class="num">tok/s per req</th><th class="num">throughput</th></tr></thead>
+      <tbody>${rows}</tbody></table></div>`);
+  }
+
   if (r.kv_cache) {
     cards.push(`<div class="card"><h3>KV cache: throughput (tok/s)</h3>${barChart([
       { label: "with cache", value: r.kv_cache.with_kv_cache.throughput_tok_s, color: ACCENT },

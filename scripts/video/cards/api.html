@@ -1,0 +1,16 @@
+<!doctype html><meta charset="utf-8"><style>
+body{margin:0;width:1280px;height:720px;background:#1b1916;color:#e8e3d8;padding:70px 90px;box-sizing:border-box;font:20px/1.7 ui-monospace,Menlo,monospace}
+.p{color:#8f887a}.o{color:#ea7c3c}.g{color:#9bb878}
+</style>
+<div class="p">$ curl localhost:8000/v1/completions -d '{"prompt": "Mini-vLLM is", "max_tokens": 40}'</div>
+<br>
+<div>{</div>
+<div>  "object": <span class="g">"text_completion"</span>,</div>
+<div>  "model": <span class="g">"distilbert/distilgpt2"</span>,</div>
+<div>  "choices": [{ "text": <span class="g">"... a small engine that serves tokens"</span>, "finish_reason": <span class="g">"length"</span> }],</div>
+<div>  "usage": { "prompt_tokens": 6, "completion_tokens": 40, "total_tokens": 46 },</div>
+<div>  "mini_vllm": { "latency_ms": <span class="o">612.4</span>, "ttft_ms": <span class="o">38.1</span>, "tokens_per_second": <span class="o">65.3</span> }</div>
+<div>}</div>
+<br>
+<div class="p">$ curl localhost:8000/metrics</div>
+<div>{ "requests": { "completed": <span class="o">42</span> }, "tokens": { "generated": <span class="o">2688</span> }, "latency_s": { "p50": <span class="o">0.61</span>, "p95": <span class="o">0.94</span> } }</div>
