@@ -1,0 +1,9 @@
+scenario,label,runs,total_tokens,latency_s_avg,latency_s_p50,latency_s_p95,throughput_tok_s,ttft_s_p50,batch_size,latency_s,slots,makespan_s,speedup,acceptance_rate
+latency,sequential,5,240,1.1222,1.1241,1.2121,42.77,0.0337,,,,,,
+batch,batch_1,,48,,,,44.28,,1,1.084,,,,
+concurrency,sequential,,240,,3.4505,5.7071,42.05,,,,1,5.7075,,
+concurrency,batched,,240,,3.8087,4.9499,48.48,,,,2,4.9503,,
+concurrency,speedup,,,,,,,,,,,,1.15,
+speculative,plain_target,5,240,1.0936,1.062,1.2249,43.89,,,,,,,
+speculative,speculative,5,240,1.4486,1.4177,1.9892,33.14,,,,,,,
+speculative,summary,,,,,,,,,,,,0.75,0.588

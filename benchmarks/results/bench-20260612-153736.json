@@ -1,0 +1,78 @@
+{
+  "timestamp": "2026-06-12 15:37:02",
+  "model": "gpt2",
+  "device": "cpu",
+  "dtype": "float32",
+  "settings": {
+    "requests": 5,
+    "max_new_tokens": 48,
+    "concurrency": 2
+  },
+  "machine": {
+    "platform": "macOS-26.3-arm64-arm-64bit",
+    "cpu": "Apple M1",
+    "cpu_count": 8,
+    "python": "3.11.14",
+    "torch": "2.12.0",
+    "transformers": "4.57.6"
+  },
+  "latency": {
+    "runs": 5,
+    "total_tokens": 240,
+    "latency_s_avg": 1.1222,
+    "latency_s_p50": 1.1241,
+    "latency_s_p95": 1.2121,
+    "throughput_tok_s": 42.77,
+    "ttft_s_p50": 0.0337
+  },
+  "batch": [
+    {
+      "batch_size": 1,
+      "latency_s": 1.084,
+      "total_tokens": 48,
+      "throughput_tok_s": 44.28
+    }
+  ],
+  "concurrency": {
+    "sequential": {
+      "slots": 1,
+      "makespan_s": 5.7075,
+      "total_tokens": 240,
+      "throughput_tok_s": 42.05,
+      "latency_s_p50": 3.4505,
+      "latency_s_p95": 5.7071
+    },
+    "batched": {
+      "slots": 2,
+      "makespan_s": 4.9503,
+      "total_tokens": 240,
+      "throughput_tok_s": 48.48,
+      "latency_s_p50": 3.8087,
+      "latency_s_p95": 4.9499
+    },
+    "speedup": 1.15
+  },
+  "speculative": {
+    "draft": "distilbert/distilgpt2",
+    "gamma": 4,
+    "plain_target": {
+      "runs": 5,
+      "total_tokens": 240,
+      "latency_s_avg": 1.0936,
+      "latency_s_p50": 1.062,
+      "latency_s_p95": 1.2249,
+      "throughput_tok_s": 43.89
+    },
+    "speculative": {
+      "runs": 5,
+      "total_tokens": 240,
+      "latency_s_avg": 1.4486,
+      "latency_s_p50": 1.4177,
+      "latency_s_p95": 1.9892,
+      "throughput_tok_s": 33.14
+    },
+    "acceptance_rate": 0.588,
+    "avg_target_forwards_per_request": 15.2,
+    "speedup": 0.75
+  }
+}

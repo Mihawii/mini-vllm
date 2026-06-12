@@ -20,7 +20,11 @@ the engine to that standard: our greedy output must match the Hugging Face
 reference token for token, with and without the cache, batched and unbatched.
 
 Built CPU-first. Everything below runs on a laptop; CUDA is used
-automatically when present.
+automatically when present, and [docs/gpu.md](docs/gpu.md) is a turnkey
+runbook for rerunning the benchmarks on a rented GPU.
+
+The long-form story of building it, including the two best bugs, is in
+[the write-up](docs/writeup-kv-cache-and-continuous-batching.md).
 
 ## Screenshots
 
@@ -49,6 +53,8 @@ explains how to regenerate all of them.
 - KV cache with on/off toggle and a benchmark that proves the speedup
 - Paged KV cache backend: block pool, per-request block tables, lazy shape discovery (GQA models included), live utilization metrics
 - Preemption: when the pool fills, the newest request is evicted and recomputed later with zero output loss
+- Prefix caching: content-addressed blocks (chained hashes, ref-counts, LRU eviction) let shared prompt prefixes skip prefill entirely
+- Speculative decoding: a draft model proposes, the target verifies in one forward pass, and a lossless acceptance rule keeps the output provably identical to target-only decoding
 - Chunked prefill: long prompts stop stalling the decode batch
 - Sampling: temperature, top-k, top-p, repetition penalty, stop strings, seeded reproducibility, greedy at temperature 0
 - Static batching with left padding and per-row finish tracking
@@ -143,14 +149,36 @@ Measured with `mini-vllm bench` on an Apple M1 (CPU, float32, distilgpt2,
 [benchmarks/results/](benchmarks/results/); rerun the command to reproduce
 on your hardware.
 
+### Three baselines, same prompts, greedy
+
+| Baseline | avg latency | tok/s per request | aggregate throughput |
+|---|---|---|---|
+| Hugging Face `model.generate()` | 1.03 s | 62.0 | 62.0 |
+| mini-vLLM, no KV cache | 2.36 s | 27.1 | 27.1 |
+| mini-vLLM, KV cache | **0.96 s** | **66.8** | 66.8 |
+| mini-vLLM, scheduler batched x4 | 2.84 s | 22.5 | **134.3** |
+
+The custom loop with the cache edges out `model.generate()` on the same
+work, and continuous batching doubles aggregate throughput at the cost of
+per-request latency when everything arrives at once. TTFT for the cached
+single path is ~22 ms.
+
+### Feature measurements
+
 | Scenario | Result |
 |---|---|
-| Single request | ~0.9 s avg latency, 69 tok/s |
 | KV cache on vs off | 69.5 vs 26.7 tok/s, **2.6x speedup** |
 | Static batching | 69 tok/s at batch 1 to 298 tok/s at batch 8 |
 | Continuous batching (4 slots vs 1) | 68 to 140 tok/s, **2.1x throughput** |
 | Prefill scaling | ~24 ms at 16 prompt tokens to ~100 ms at 256, decode speed flat |
 | Dynamic int8 vs fp32 | 72 vs 64 tok/s, checkpoint 328 to 239 MB, 100% greedy token agreement on the test prompts |
+| Speculative (gpt2 target, distilgpt2 draft, gamma 4) | 0.75x on CPU at 59% acceptance; 3.2 tokens committed per target forward, output verified identical |
+
+Speculative decoding loses wall-clock time on this CPU because the draft
+costs about two thirds of the target per step; the benchmark says so
+plainly. The target forward count still drops 3x, which is the quantity
+that turns into speedup once the draft/target cost ratio grows (bigger
+targets, or a GPU; see [docs/gpu.md](docs/gpu.md)).
 
 The KV cache gap widens with completion length because the uncached path
 re-processes the whole sequence every step. The prompt sweep shows the other
@@ -252,9 +280,10 @@ aligned allocations; the investigation is written up in
 
 ## Roadmap
 
-- Prefix caching: block-aligned prompt sharing across requests, the natural
-  next step once block tables exist
-- Speculative decoding (tiny-gpt2 drafting for distilgpt2)
+- Triton paged-attention kernel on a rented GPU: read blocks in place
+  through the block table instead of gathering (runbook ready in
+  [docs/gpu.md](docs/gpu.md))
+- GPU benchmark rows next to every CPU number
 - Mixed prefill+decode forward passes (true chunked prefill batching needs
   variable-length attention)
 - Real multi-process tensor parallelism behind the existing sharding math
